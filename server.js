@@ -11,7 +11,8 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_NODE';
 
 // 1. GLOBAL PRODUCTION MIDDLEWARE
-app.use(cors({ origin: '*' }));
+// 1. Change this line near the top so it looks in the main folder, not 'public'
+app.use(express.static(path.join(__dirname, '.')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
