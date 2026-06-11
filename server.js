@@ -4,20 +4,20 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 1. MIDDLEWARE PIPELINE
-app.use(cors({ origin: '*' })); // Allows your frontend to connect seamlessly
+// 1. MIDDLEWARE
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, '.')));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// 2. MONGODB CLUSTER CONNECTION
-const MONGO_URI = process.env.MONGO_URI || "your_mongodb_connection_string_here";
+// 2. MONGODB CONNECTION
+// This safely reads the string you saved in Render Environment settings
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://test:test@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('🚀 Connected smoothly to MongoDB Cluster'))
+  .then(() => console.log('🚀 MongoDB Connected Successfully'))
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
 // 3. DATABASE SCHEMA & MODEL
@@ -31,24 +31,25 @@ const EnrollmentSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+// We name the model 'Enrollment' to avoid any matching conflicts
 const Enrollment = mongoose.model('Enrollment', EnrollmentSchema);
 
-// 4. MULTER FILE UPLOAD CONFIGURATION (Max 5MB per file)
+// 4. MULTER FILE CONFIGURATION
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 } 
 });
 
-// 5. USER ROUTE: SUBMIT ENROLLMENT & GENERATE CODES
+// 5. USER ROUTE: CREATE SECURE ACCOUNT
 app.post('/api/auth/register', upload.any(), async (req, res) => {
     try {
         const { name, email } = req.body;
         if (!name || !email) {
-            return res.status(400).json({ error: 'Name and Email fields are strictly required.' });
+            return res.status(400).json({ error: 'Name and Email fields are required.' });
         }
 
-        // Generate authentic-looking tracking parameters
+        // Generate matching tracking parameters
         const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
         const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
 
@@ -67,23 +68,24 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
     }
 });
 
-// 6. USER ROUTE: TRACK PROFILE STATUS VIA UCI
+// 6. USER ROUTE: TRACK FILE VIA UCI
 app.post('/api/auth/track', async (req, res) => {
     try {
         const { uciNumber } = req.body;
+        if (!uciNumber) return res.status(400).json({ error: 'UCI ID is required.' });
+
         const file = await Enrollment.findOne({ uciNumber: uciNumber.trim() });
-        
         if (!file) {
             return res.status(404).json({ error: 'No application registry found matching this UCI File ID.' });
         }
         
         res.json({ status: file.status, adminNotes: file.adminNotes, name: file.name });
     } catch (error) {
-        res.status(500).json({ error: 'System tracking node execution failure.' });
+        res.status(500).json({ error: 'System tracking node failure.' });
     }
 });
 
-// 7. ADMIN ROUTE: FETCH ALL SUBMISSIONS FOR PANEL VIEW
+// 7. ADMIN ROUTE: FETCH LIVE DATA ROWS
 app.get('/api/admin/enrollments', async (req, res) => {
     try {
         const records = await Enrollment.find().sort({ createdAt: -1 });
@@ -93,43 +95,27 @@ app.get('/api/admin/enrollments', async (req, res) => {
     }
 });
 
-// 8. ADMIN ROUTE: UPDATE DECISION STATUS & NOTES
+// 8. ADMIN ROUTE: UPDATE DECISION STATUS
 app.post('/api/admin/decision', async (req, res) => {
     try {
         const { id, status, adminNotes } = req.body;
-        const updatedFile = await Enrollment.findByIdAndUpdate(
-            id, 
-            { status, adminNotes }, 
-            { new: true }
-        );
+        const updatedFile = await Enrollment.findByIdAndUpdate(id, { status, adminNotes }, { new: true });
         if (!updatedFile) return res.status(404).json({ error: 'File profile entry not found.' });
-        res.json({ success: true, message: 'Registry status updated successfully!' });
+        res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Failed to write decision parameters.' });
     }
 });
-// Explicit route to serve your main homepage layout
+
+// 9. PAGE ROUTING PATHS
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-// Catch-all route to serve pages neatly
-app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-// 1. Serving the admin data rows
-app.get('/api/admin/enrollments', async (req, res) => {
-    try {
-        const records = await mongoose.model('Enrollment').find().sort({ createdAt: -1 });
-        res.json(records);
-    } catch (error) {
-        res.status(500).json({ error: 'Database stream failed' });
-    }
-});
 
-// 2. Serving the actual admin interface webpage
-app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
 app.listen(PORT, () => {
-    console.log(`Server executing securely on port ${PORT}`);
+    console.log(`Server executing smoothly on port ${PORT}`);
 });
