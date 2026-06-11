@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Client Case Work Dashboard Engine Layout</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="gov-branding">
+            <div class="flag-accent">GC Portal Account</div>
+            <h1 id="welcome-title">Loading Secured File Matrix...</h1>
+        </div>
+        <button class="btn btn-primary" onclick="logout()">Terminate Secure Authentication Session</button>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <h3>Application Structural Assessment Tracking Metric State</h3>
+            <div class="progress-tracker" id="tracker-bar">
+                <span class="step" id="step-Draft">Draft</span>
+                <span class="step" id="step-Submitted">Submitted</span>
+                <span class="step" id="step-UnderReview">Under Review</span>
+                <span class="step" id="step-Required">Additional Documents Required</span>
+                <span class="step" id="step-Approved">Approved</span>
+                <span class="step" id="step-Completed">Completed</span>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="sidebar">
+                <h3>Case Metrics</h3>
+                <p style="margin-bottom:10px;"><strong>UCI File No:</strong> <span id="lbl-uci">--</span></p>
+                <p style="margin-bottom:20px;"><strong>GC Tracking Ref:</strong> <span id="lbl-gcref">--</span></p>
+                <hr style="margin-bottom:15px; border:0; border-top:1px solid var(--gov-blue-light);">
+                <ul>
+                    <li onclick="switchDashView('profile-tab')">Account File Core Identity Data</li>
+                    <li onclick="switchDashView('docs-tab')">Document Management Cloud Repositories</li>
+                    <li onclick="switchDashView('pay-tab')">Fee Ledger Processing Settlement Module</li>
+                </ul>
+            </div>
+
+            <div class="main-content">
+                <div id="profile-tab" class="card dash-view">
+                    <h3>Core Registry Framework Profile File Metrics</h3>
+                    <div id="profile-data-details"></div>
+                </div>
+
+                <div id="docs-tab" class="card dash-view" style="display:none;">
+                    <h3>Secure Processing Document Repository Infrastructure Engine</h3>
+                    <form id="docUploadForm" style="margin-bottom:20px;">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="docTypeSelect">Document Category Type Specification Label</label>
+                                <select id="docTypeSelect" required>
+                                    <option value="Proof of Funds">Proof of Financial Capital Liquidity Assets</option>
+                                    <option value="Police Clearance Certificate">Police Clearance Matrix Background Registry</option>
+                                    <option value="Medical Examination Record">Official Panel Physician Medical Evaluation Sheet</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="newDocFile">Select Target Binary Upload File Component</label>
+                                <input type="file" id="newDocFile" accept=".pdf,.png,.jpg,.jpeg" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Transmit File To Processing Core Database Registry</button>
+                    </form>
+                    <table>
+                        <thead>
+                            <tr><th>Target Category Type</th><th>Document Asset File Name</th><th>System Evaluation Registry Status Status</th></tr>
+                        </thead>
+                        <tbody id="document-table-body"></tbody>
+                    </table>
+                </div>
+
+                <div id="pay-tab" class="card dash-view" style="display:none;">
+                    <h3>Regulatory Processing & Operational Maintenance Asset Fee System</h3>
+                    <form id="paymentSystemForm">
+                        <div class="form-group" style="margin-bottom:15px;">
+                            <label for="paymentMethodSelection">Select Regulated Settlement Engine Channels</label>
+                            <select id="paymentMethodSelection" onchange="toggleRepPaymentFields()" required>
+                                <option value="Visa">Visa Secure Authentication Network Engine</option>
+                                <option value="Mastercard">Mastercard Settlement Clearing Grid System</option>
+                                <option value="Amex">American Express Business Channel Layout Matrix</option>
+                                <option value="Representative Payment">Authorized Immigrant Legal Counsel Representative Payment Channel</option>
+                            </select>
+                        </div>
+                        
+                        <div id="representativeFieldsBlock" style="display:none; background:#F0F4F8; padding:15px; border-radius:4px; margin-bottom:15px;">
+                            <h4>Authorized Practitioner Reference Framework Specification Input Fields</h4>
+                            <div class="form-group" style="margin-bottom:10px;">
+                                <label>Representative Professional Practitioner Registered Full Legal Name</label>
+                                <input type="text" id="repName">
+                            </div>
+                            <div class="form-group">
+                                <label>College of Immigration and Citizenship Consultants (CICC) ID Number</label>
+                                <input type="text" id="repId">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-gov">Authorise Processing Fee Transactions ($1,250 CAD)</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", loadClientDashboardData);
+    </script>
+</body>
+</html>

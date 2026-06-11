@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Immigration, Refugees and Citizenship Canada Portal Replica</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="gov-branding">
+            <div class="flag-accent">Government of Canada</div>
+            <h1>Immigration and Secure Client Portal Terminal</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <div style="margin-bottom: 20px;">
+            <button class="btn btn-primary" onclick="showAuthTab('login')">Access Existing Account</button>
+            <button class="btn btn-gov" onclick="showAuthTab('register')">Create Secure Account Profiling File</button>
+        </div>
+
+        <div id="login-section" class="card">
+            <h2>Account Secure Gateway Sign-In</h2>
+            <form id="loginForm">
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label for="loginEmail">Email Address</label>
+                    <input type="email" id="loginEmail" required>
+                </div>
+                <div class="form-group" style="margin-bottom:25px;">
+                    <label for="loginPassword">Account Security Password</label>
+                    <input type="password" id="loginPassword" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Verify and Sign In</button>
+            </form>
+        </div>
+
+        <div id="register-section" class="card" style="display: none;">
+            <h2>Secure System Enrollment Registry</h2>
+            <form id="registerForm" enctype="multipart/form-data">
+                <h3 style="border-bottom: 2px solid var(--border-grey); padding-bottom: 5px;">Personal File Metrics</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="fullName">Legal Full Name (As written in Passport)</label>
+                        <input type="text" id="fullName" name="fullName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="dob">Date of Birth</label>
+                        <input type="date" id="dob" name="dob" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="gender">Gender File Metric</label>
+                        <select id="gender" name="gender" required>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Other">Other / X-Marker</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="nationality">Country of Core Citizenship Nationality</label>
+                        <input type="text" id="nationality" name="nationality" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="passportNumber">Passport Document Serial Number</label>
+                        <input type="text" id="passportNumber" name="passportNumber" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="countryOfResidence">Current Legal Country of Residence</label>
+                        <input type="text" id="countryOfResidence" name="countryOfResidence" required>
+                    </div>
+                </div>
+
+                <h3 style="border-bottom: 2px solid var(--border-grey); padding-bottom: 5px; margin-top:20px;">Contact Parameters & Secure Access Setup</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="phoneNumber">Primary Telephone Contact Base Line</label>
+                        <input type="tel" id="phoneNumber" name="phoneNumber" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Account Communication Email Access Point</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="password">Create Security Access Password</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm Verification Password</label>
+                        <input type="password" id="confirmPassword" required>
+                    </div>
+                </div>
+
+                <h3 style="border-bottom: 2px solid var(--border-grey); padding-bottom: 5px; margin-top:20px;">Primary Digital Identification Documentation Attachment Subsystem</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="passportFile">Upload Primary Bio-Data Page Passport Scan (PDF/IMG)</label>
+                        <input type="file" id="passportFile" name="passport" accept=".jpg,.jpeg,.png,.pdf" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="photoFile">Official Passport Sized Personal Identification Photograph</label>
+                        <input type="file" id="photoFile" name="passportPhoto" accept=".jpg,.jpeg,.png" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="nationalIdFile">National Identity Document Scan (Optional Component File)</label>
+                        <input type="file" id="nationalIdFile" name="nationalId" accept=".jpg,.jpeg,.png,.pdf">
+                    </div>
+                </div>
+
+                <button type="submit" style="margin-top:20px;" class="btn btn-gov">Execute Processing Enrollment Registry & File Setup</button>
+            </form>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

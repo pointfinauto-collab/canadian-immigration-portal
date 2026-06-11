@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Official Adjudicating Processing Officer Administration Matrix Framework</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="gov-branding">
+            <div class="flag-accent">IRCC Officer Node</div>
+            <h1>Internal Case Review Operational Engine Dashboard</h1>
+        </div>
+        <button class="btn btn-primary" onclick="logout()">Terminate Command Station Access</button>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <h3>Registered Global Case Files Operational Tracking Database Grid</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Legal Applicant Full Name Name</th>
+                        <th>Generated Unique Case UCI File ID</th>
+                        <th>GC Registry Tracking Token Reference</th>
+                        <th>Processing Lifecycle State Status</th>
+                        <th>Adjudicating Operations Actions Interface Layout Control</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-applicants-table"></tbody>
+            </table>
+        </div>
+    </div>
+    <script src="app.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", loadAdminDashboardData);
+    </script>
+</body>
+</html>
