@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' })); // Allows your frontend to connect seamlessly
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public'))); // Serves admin.html and app.js automatically
+app.use(express.static(path.join(__dirname, '.')));
 
 // 2. MONGODB CLUSTER CONNECTION
 const MONGO_URI = process.env.MONGO_URI || "your_mongodb_connection_string_here";
