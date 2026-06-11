@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Administration - Enrollment Registry</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .admin-container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 5px solid #c8102e; }
+        h1 { color: #333; font-size: 24px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #c8102e; color: white; }
+        tr:hover { background-color: #f9f9f9; }
+        .badge { background: #e1f5fe; color: #0288d1; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <h1>🔒 Administrative Registry Control Panel</h1>
+        <p>Reviewing active enrollment profile file databases live from MongoDB cloud service layers.</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Full Name</th>
+                    <th>Email</th>
+                    <th>UCI File ID</th>
+                    <th>Tracking Reference</th>
+                </tr>
+            </thead>
+            <tbody id="adminTableBody">
+                <tr>
+                    <td colspan="4" style="text-align:center;">Loading secure data streams...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // Fetch all profiles from your server route when the page opens
+        async function loadAdminData() {
+            try {
+                const response = await fetch('/api/admin/enrollments');
+                const data = await response.json();
+                
+                const tableBody = document.getElementById('adminTableBody');
+                tableBody.innerHTML = ''; // Clear loading text
+                
+                if (data.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No enrollment data found in cloud cluster.</td></tr>`;
+                    return;
+                }
+
+                data.forEach(user => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><strong>${user.name || 'N/A'}</strong></td>
+                        <td>${user.email || 'N/A'}</td>
+                        <td><span class="badge">${user.uciNumber || 'Pending'}</span></td>
+                        <td><code>${user.trackingRef || 'Pending'}</code></td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Admin fetch error:', error);
+                document.getElementById('adminTableBody').innerHTML = `<tr><td colspan="4" style="text-align:center; color:red;">Failed to stream data files from database.</td></tr>`;
+            }
+        }
+        
+        window.onload = loadAdminData;
+    </script>
+</body>
+</html>
