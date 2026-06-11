@@ -1,4 +1,4 @@
-const API_BASE = 'https://canadian-immigration-portal.onrender.com//api';
+const API_BASE = '/api';
 
 function showAuthTab(target) {
     if(target === 'login') {
