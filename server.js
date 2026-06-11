@@ -116,7 +116,20 @@ app.get('/', (req, res) => {
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
+// 1. Serving the admin data rows
+app.get('/api/admin/enrollments', async (req, res) => {
+    try {
+        const records = await mongoose.model('Enrollment').find().sort({ createdAt: -1 });
+        res.json(records);
+    } catch (error) {
+        res.status(500).json({ error: 'Database stream failed' });
+    }
+});
 
+// 2. Serving the actual admin interface webpage
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
 app.listen(PORT, () => {
     console.log(`Server executing securely on port ${PORT}`);
 });
