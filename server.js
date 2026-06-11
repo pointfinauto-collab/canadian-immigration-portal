@@ -108,7 +108,10 @@ app.post('/api/admin/decision', async (req, res) => {
         res.status(500).json({ error: 'Failed to write decision parameters.' });
     }
 });
-
+// Explicit route to serve your main homepage layout
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 // Catch-all route to serve pages neatly
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
