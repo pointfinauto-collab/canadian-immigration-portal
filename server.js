@@ -1,232 +1,119 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const rateLimit = require('express-rate-limit');
-const { connectDB, User, Document, Payment, Notification, AuditLog } = require('./db');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_GOV_KEY_2026';
 
+// 1. MIDDLEWARE PIPELINE
+app.use(cors({ origin: '*' })); // Allows your frontend to connect seamlessly
 app.use(express.json());
-app.use(cors());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public'))); // Serves admin.html and app.js automatically
 
-const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 100,
-    message: 'Too many requests from this IP, please try again later.'
+// 2. MONGODB CLUSTER CONNECTION
+const MONGO_URI = process.env.MONGO_URI || "your_mongodb_connection_string_here";
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('🚀 Connected smoothly to MongoDB Cluster'))
+  .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+// 3. DATABASE SCHEMA & MODEL
+const EnrollmentSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    uciNumber: { type: String, unique: true },
+    trackingRef: { type: String, unique: true },
+    status: { type: String, default: 'Submitted / Review Pending' },
+    adminNotes: { type: String, default: 'Your application file is currently undergoing preliminary verification.' },
+    createdAt: { type: Date, default: Date.now }
 });
-app.use('/api/', apiLimiter);
 
-if (!fs.existsSync('./uploads')) {
-    fs.mkdirSync('./uploads');
-}
+const Enrollment = mongoose.model('Enrollment', EnrollmentSchema);
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => { cb(null, './uploads/'); },
-    filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`);
+// 4. MULTER FILE UPLOAD CONFIGURATION (Max 5MB per file)
+const storage = multer.memoryStorage();
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 } 
+});
+
+// 5. USER ROUTE: SUBMIT ENROLLMENT & GENERATE CODES
+app.post('/api/auth/register', upload.any(), async (req, res) => {
+    try {
+        const { name, email } = req.body;
+        if (!name || !email) {
+            return res.status(400).json({ error: 'Name and Email fields are strictly required.' });
+        }
+
+        // Generate authentic-looking tracking parameters
+        const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
+        const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
+
+        const newEnrollment = new Enrollment({
+            name,
+            email,
+            uciNumber,
+            trackingRef
+        });
+
+        await newEnrollment.save();
+        res.status(201).json({ success: true, uciNumber, trackingRef });
+    } catch (error) {
+        console.error('Registration Error:', error);
+        res.status(500).json({ error: 'Failed to process registry save entry.' });
     }
 });
 
-const fileFilter = (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) return cb(null, true);
-    cb(new Error('Only PDFs and Images (JPG, PNG) are allowed.'));
-};
-
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
-    fileFilter: fileFilter
+// 6. USER ROUTE: TRACK PROFILE STATUS VIA UCI
+app.post('/api/auth/track', async (req, res) => {
+    try {
+        const { uciNumber } = req.body;
+        const file = await Enrollment.findOne({ uciNumber: uciNumber.trim() });
+        
+        if (!file) {
+            return res.status(404).json({ error: 'No application registry found matching this UCI File ID.' });
+        }
+        
+        res.json({ status: file.status, adminNotes: file.adminNotes, name: file.name });
+    } catch (error) {
+        res.status(500).json({ error: 'System tracking node execution failure.' });
+    }
 });
 
-function generateUCI() {
-    return `UCI-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-}
-function generateGCRef() {
-    return `GC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
-}
-
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Access Denied: Token Missing' });
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ message: 'Forbidden: Invalid Token' });
-        req.user = user;
-        next();
-    });
-};
-
-const requireAdmin = (req, res, next) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Access Denied: Admins Only' });
-    next();
-};
-
-app.post('/api/auth/register', upload.fields([
-    { name: 'passport', maxCount: 1 },
-    { name: 'nationalId', maxCount: 1 },
-    { name: 'passportPhoto', maxCount: 1 }
-]), async (req, res) => {
+// 7. ADMIN ROUTE: FETCH ALL SUBMISSIONS FOR PANEL VIEW
+app.get('/api/admin/enrollments', async (req, res) => {
     try {
-        const { fullName, dob, gender, nationality, passportNumber, countryOfResidence, phoneNumber, email, password } = req.body;
-        const path = require('path');
+        const records = await Enrollment.find().sort({ createdAt: -1 });
+        res.json(records);
+    } catch (error) {
+        res.status(500).json({ error: 'Administrative data fetch failure.' });
+    }
+});
 
-// Route to physically serve the admin.html file to your browser
+// 8. ADMIN ROUTE: UPDATE DECISION STATUS & NOTES
+app.post('/api/admin/decision', async (req, res) => {
+    try {
+        const { id, status, adminNotes } = req.body;
+        const updatedFile = await Enrollment.findByIdAndUpdate(
+            id, 
+            { status, adminNotes }, 
+            { new: true }
+        );
+        if (!updatedFile) return res.status(404).json({ error: 'File profile entry not found.' });
+        res.json({ success: true, message: 'Registry status updated successfully!' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to write decision parameters.' });
+    }
+});
+
+// Catch-all route to serve pages neatly
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
-        const userExists = await User.findOne({ email });
-        if (userExists) return res.status(400).json({ message: 'Email already registered' });
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const uci = generateUCI();
-        const gcRef = generateGCRef();
-
-        const newUser = new User({
-            fullName, dob, gender, nationality, passportNumber, countryOfResidence, phoneNumber, email,
-            password: hashedPassword, uci, gcRef, role: 'client'
-        });
-        const savedUser = await newUser.save();
-
-        const filesToSave = [];
-        if (req.files['passport']) filesToSave.push({ userId: savedUser._id, documentType: 'Passport', fileName: req.files['passport'][0].originalname, filePath: req.files['passport'][0].path });
-        if (req.files['nationalId']) filesToSave.push({ userId: savedUser._id, documentType: 'National ID', fileName: req.files['nationalId'][0].originalname, filePath: req.files['nationalId'][0].path });
-        if (req.files['passportPhoto']) filesToSave.push({ userId: savedUser._id, documentType: 'Passport Photo', fileName: req.files['passportPhoto'][0].originalname, filePath: req.files['passportPhoto'][0].path });
-
-        if (filesToSave.length > 0) {
-            await Document.insertMany(filesToSave);
-        }
-
-        await new Notification({ userId: savedUser._id, message: `Welcome ${fullName}. Your account has been generated with UCI: ${uci}` }).save();
-        await new AuditLog({ action: 'USER_REGISTER', performedBy: email, details: `Account created successfully with identifier ${uci}.` }).save();
-
-        res.status(201).json({ message: 'Registration complete', uci, gcRef });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        const user = await User.findOne({ email });
-        if (!user) return res.status(400).json({ message: 'User not found' });
-
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) return res.status(400).json({ message: 'Invalid credentials' });
-
-        const token = jwt.sign({ id: user._id, role: user.role, email: user.email }, JWT_SECRET, { expiresIn: '2h' });
-        
-        await new AuditLog({ action: 'USER_LOGIN', performedBy: user.email, details: 'Logged into portal access point' }).save();
-        res.json({ token, role: user.role });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/client/profile', authenticateToken, async (req, res) => {
-    try {
-        const profile = await User.findById(req.user.id).select('-password');
-        const documents = await Document.find({ userId: req.user.id });
-        const payments = await Payment.find({ userId: req.user.id });
-        const notifications = await Notification.find({ userId: req.user.id }).sort({ createdAt: -1 });
-        res.json({ profile, documents, payments, notifications });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/client/upload', authenticateToken, upload.single('supplementary'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ message: 'No file explicitly attached' });
-        
-        const newDoc = new Document({
-            userId: req.user.id,
-            documentType: req.body.documentType || 'Supplemental File',
-            fileName: req.file.originalname,
-            filePath: req.file.path
-        });
-        await newDoc.save();
-        await new Notification({ userId: req.user.id, message: `New structural document uploaded: ${req.file.originalname}` }).save();
-        res.status(201).json({ message: 'Document added to client record file database layer successfully' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/client/pay', authenticateToken, async (req, res) => {
-    try {
-        const { amount, method, repName, repId } = req.body;
-        const txId = 'TXN-' + Math.floor(10000000 + Math.random() * 90000000);
-        const receiptNo = 'REC-' + Math.floor(100000 + Math.random() * 900000);
-
-        const newPayment = new Payment({
-            userId: req.user.id,
-            transactionId: txId,
-            amount,
-            paymentMethod: method,
-            status: method === 'Representative Payment' ? 'Pending' : 'Completed',
-            receiptNumber: receiptNo,
-            representativeInfo: method === 'Representative Payment' ? { name: repName, membershipId: repId } : undefined
-        });
-
-        await newPayment.save();
-        
-        if(newPayment.status === 'Completed') {
-            await new Notification({ userId: req.user.id, message: `Payment of $${amount} verified successfully. Receipt: ${receiptNo}` }).save();
-        }
-        res.status(201).json({ message: 'Payment structure registered successfully', transactionId: txId, receiptNumber: receiptNo });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/admin/applicants', authenticateToken, requireAdmin, async (req, res) => {
-    try {
-        const users = await User.find({ role: 'client' }).select('-password');
-        res.json(users);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.put('/api/admin/applicant/:id', authenticateToken, requireAdmin, async (req, res) => {
-    try {
-        const { applicationStatus } = req.body;
-        const updatedUser = await User.findByIdAndUpdate(req.params.id, { applicationStatus }, { new: true });
-        
-        await new Notification({
-            userId: updatedUser._id,
-            message: `Your Global Application file processing updates status has changed to: ${applicationStatus}`
-        }).save();
-
-        res.json({ message: 'Status processing parameter written successfully to schema layout layer' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-// Hidden Admin Gateway - Streams all profiles directly from MongoDB
-app.get('/api/admin/enrollments', async (req, res) => {
-    try {
-        // Access your database model (assuming your model variable name is User or Enrollment)
-        // This pulls every record from the collection sorted by the newest first
-        const records = await mongoose.model('User').find().sort({ createdAt: -1 });
-        res.json(records);
-    } catch (error) {
-        res.status(500).json({ error: 'Internal system administrative stream failure' });
-    }
-});
-connectDB().then(() => {
-    app.listen(PORT, () => console.log(`Immigration Cloud Services running securely on system port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server executing securely on port ${PORT}`);
 });
