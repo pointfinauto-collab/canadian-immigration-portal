@@ -211,7 +211,17 @@ app.put('/api/admin/applicant/:id', authenticateToken, requireAdmin, async (req,
         res.status(500).json({ error: error.message });
     }
 });
-
+// Hidden Admin Gateway - Streams all profiles directly from MongoDB
+app.get('/api/admin/enrollments', async (req, res) => {
+    try {
+        // Access your database model (assuming your model variable name is User or Enrollment)
+        // This pulls every record from the collection sorted by the newest first
+        const records = await mongoose.model('User').find().sort({ createdAt: -1 });
+        res.json(records);
+    } catch (error) {
+        res.status(500).json({ error: 'Internal system administrative stream failure' });
+    }
+});
 connectDB().then(() => {
     app.listen(PORT, () => console.log(`Immigration Cloud Services running securely on system port ${PORT}`));
 });
