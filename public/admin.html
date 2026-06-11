@@ -3,72 +3,111 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Administration - Enrollment Registry</title>
+    <title>System Administration - Control Console</title>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .admin-container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 5px solid #c8102e; }
-        h1 { color: #333; font-size: 24px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #c8102e; color: white; }
-        tr:hover { background-color: #f9f9f9; }
-        .badge { background: #e1f5fe; color: #0288d1; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        body { font-family: Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+        .admin-box { max-width: 1100px; margin: 0 auto; background: white; padding: 25px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-top: 6px solid #c8102e; }
+        h1 { color: #222; margin-top: 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #fff; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eaeaea; }
+        th { background: #333; color: white; }
+        select, textarea { padding: 6px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .save-btn { background: #2e7d32; color: white; border: none; padding: 8px 12px; cursor: pointer; font-weight: bold; border-radius: 4px; margin-top: 5px; }
+        .save-btn:hover { background: #1b5e20; }
+        .badge { background: #eceff1; padding: 4px 6px; border-radius: 4px; font-family: monospace; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div class="admin-container">
-        <h1>🔒 Administrative Registry Control Panel</h1>
-        <p>Reviewing active enrollment profile file databases live from MongoDB cloud service layers.</p>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th>Full Name</th>
-                    <th>Email</th>
-                    <th>UCI File ID</th>
-                    <th>Tracking Reference</th>
-                </tr>
-            </thead>
-            <tbody id="adminTableBody">
-                <tr>
-                    <td colspan="4" style="text-align:center;">Loading secure data streams...</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
 
-    <script>
-        // Fetch all profiles from your server route when the page opens
-        async function loadAdminData() {
-            try {
-                const response = await fetch('/api/admin/enrollments');
-                const data = await response.json();
-                
-                const tableBody = document.getElementById('adminTableBody');
-                tableBody.innerHTML = ''; // Clear loading text
-                
-                if (data.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No enrollment data found in cloud cluster.</td></tr>`;
-                    return;
-                }
+<div class="admin-box">
+    <h1>🔒 System Administration Panel</h1>
+    <p>Review submitted applicant file grids and execute official processing updates instantly.</p>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Applicant Details</th>
+                <th>File Identifiers</th>
+                <th>Processing Status Decision</th>
+                <th>Official Assessment Notes</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="masterTableBody">
+            <tr><td colspan="5" style="text-align:center;">Synchronizing live MongoDB data channels...</td></tr>
+        </tbody>
+    </table>
+</div>
 
-                data.forEach(user => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td><strong>${user.name || 'N/A'}</strong></td>
-                        <td>${user.email || 'N/A'}</td>
-                        <td><span class="badge">${user.uciNumber || 'Pending'}</span></td>
-                        <td><code>${user.trackingRef || 'Pending'}</code></td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            } catch (error) {
-                console.error('Admin fetch error:', error);
-                document.getElementById('adminTableBody').innerHTML = `<tr><td colspan="4" style="text-align:center; color:red;">Failed to stream data files from database.</td></tr>`;
+<script>
+    const API_BASE = window.location.origin + '/api';
+
+    async function fetchAllFiles() {
+        try {
+            const res = await fetch(`${API_BASE}/admin/enrollments`);
+            const data = await res.json();
+            const tbody = document.getElementById('masterTableBody');
+            tbody.innerHTML = '';
+
+            if(data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No active application profiles found in database.</td></tr>`;
+                return;
             }
+
+            data.forEach(file => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${file.name}</strong><br><small style="color:#666;">${file.email}</small></td>
+                    <td>
+                        UCI: <span class="badge">${file.uciNumber}</span><br>
+                        Ref: <span class="badge">${file.trackingRef}</span>
+                    </td>
+                    <td>
+                        <select id="status-${file._id}">
+                            <option value="Submitted / Review Pending" ${file.status === 'Submitted / Review Pending' ? 'selected' : ''}>Submitted / Review Pending</option>
+                            <option value="Biometrics Verification Stage" ${file.status === 'Biometrics Verification Stage' ? 'selected' : ''}>Biometrics Verification Stage</option>
+                            <option value="Background Eligibility Check" ${file.status === 'Background Eligibility Check' ? 'selected' : ''}>Background Eligibility Check</option>
+                            <option value="Registry Profile Approved" ${file.status === 'Registry Profile Approved' ? 'selected' : ''}>Registry Profile Approved</option>
+                            <option value="Refusal Issued" ${file.status === 'Refusal Issued' ? 'selected' : ''}>Refusal Issued</option>
+                        </select>
+                    </td>
+                    <td>
+                        <textarea id="notes-${file._id}" rows="2">${file.adminNotes || ''}</textarea>
+                    </td>
+                    <td>
+                        <button class="save-btn" onclick="submitDecision('${file._id}')">Update File</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch (err) {
+            document.getElementById('masterTableBody').innerHTML = `<tr><td colspan="5" style="text-align:center; color:red;">Connection error linking database schemas.</td></tr>`;
         }
-        
-        window.onload = loadAdminData;
-    </script>
+    }
+
+    async function submitDecision(id) {
+        const status = document.getElementById(`status-${id}`).value;
+        const adminNotes = document.getElementById(`notes-${id}`).value;
+
+        try {
+            const res = await fetch(`${API_BASE}/admin/decision`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, status, adminNotes })
+            });
+            const data = await res.json();
+            if(data.success) {
+                alert('Official file update successfully transmitted!');
+                fetchAllFiles();
+            } else {
+                alert('Update failure: ' + data.error);
+            }
+        } catch (err) {
+            alert('Network communication fault handling form data.');
+        }
+    }
+
+    window.onload = fetchAllFiles;
+</script>
 </body>
 </html>
