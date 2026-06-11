@@ -1,102 +1,71 @@
+// Dynamic Base URL Configuration
 const API_BASE = window.location.origin + '/api';
 
-document.addEventListener('DOMContentLoaded', () => {
-    
-    // --- GATEWAY ACTION: ACCOUNT REGISTRATION ---
-    const registerForm = document.getElementById('registerForm');
-    if (registerForm) {
-        registerForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = registerForm.querySelector('button');
-            btn.innerText = "Transmitting Packet...";
-            btn.disabled = true;
+// --- HANDLER: USER FORM ENROLLMENT REGISTRATION ---
+const registerForm = document.getElementById('registerForm');
+if (registerForm) {
+    registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const formData = new FormData(registerForm);
+        const submitButton = registerForm.querySelector('button');
+        submitButton.innerText = "Processing Transmission...";
+        submitButton.disabled = true;
 
-            try {
-                const res = await fetch(`${API_BASE}/auth/register`, {
-                    method: 'POST',
-                    body: new FormData(registerForm)
-                });
-                const data = await res.json();
+        try {
+            const res = await fetch(`${API_BASE}/auth/register`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
 
-                if (res.ok && data.success) {
-                    alert(`🎉 Account Securely Saved to Directory!\n\nWrite down your credential keys:\nUCI ID: ${data.uciNumber}\nTracking Key: ${data.trackingRef}`);
-                    registerForm.reset();
-                } else {
-                    alert(`Registry Exception: ${data.error}`);
-                }
-            } catch (err) {
-                alert('Connection loop interface failure.');
-            } finally {
-                btn.innerText = "Execute Processing Enrollment Registry";
-                btn.disabled = false;
+            if (data.success) {
+                alert(`🎉 Registry Created Successfully!\n\nWrite down your tracking credentials:\nUCI File ID: ${data.uciNumber}\nTracking Reference: ${data.trackingRef}`);
+                registerForm.reset();
+            } else {
+                alert(`Error: ${data.error || 'Submission Refused'}`);
             }
-        });
-    }
+        } catch (err) {
+            console.error('System Network Failure:', err);
+            alert('CRITICAL ERROR: Connection to backend data nodes lost.');
+        } finally {
+            submitButton.innerText = "Execute Processing Enrollment Registry";
+            submitButton.disabled = false;
+        }
+    });
+}
 
-    // --- GATEWAY ACTION: ACCOUNT SIGN-IN ---
-    const loginForm = document.getElementById('loginForm');
-    if (loginForm) {
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
+// --- HANDLER: USER APPLICATION TRACKING PANEL ---
+const trackForm = document.getElementById('trackForm');
+const trackingResultDiv = document.getElementById('trackingResult'); // Make sure this id exists in your HTML interface to display results!
 
-            try {
-                const res = await fetch(`${API_BASE}/auth/login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-                const data = await res.json();
+if (trackForm) {
+    trackForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const uciInput = document.getElementById('uciInput').value;
 
-                if (res.ok && data.success) {
-                    localStorage.setItem('adminToken', data.token);
-                    localStorage.setItem('userRole', data.role);
-                    
-                    if (data.role === 'admin') {
-                        alert('🔑 Administrative Authorization Confirmed. Redirecting...');
-                        window.location.href = '/admin';
-                    } else {
-                        alert(`Welcome back, ${data.name}.\nUCI: ${data.uciNumber}\nRef: ${data.trackingRef}`);
-                    }
-                } else {
-                    alert(`Access Refused: ${data.error}`);
-                }
-            } catch (err) {
-                alert('System failure during verification routing loop.');
+        try {
+            const res = await fetch(`${API_BASE}/auth/track`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uciNumber: uciInput })
+            });
+            const data = await res.json();
+
+            if (res.status === 200) {
+                trackingResultDiv.style.display = 'block';
+                trackingResultDiv.innerHTML = `
+                    <div style="background:#e8f5e9; padding:15px; border-left:5px solid #2e7d32; border-radius:4px; margin-top:15px;">
+                        <h3>File Profile: ${data.name}</h3>
+                        <p><strong>Current File Status:</strong> <span style="color:#c8102e;">${data.status}</span></p>
+                        <p><strong>Officer Assessment Comments:</strong> ${data.adminNotes}</p>
+                    </div>
+                `;
+            } else {
+                alert(data.error || 'Tracking entry mismatch.');
             }
-        });
-    }
-
-    // --- GATEWAY ACTION: USER PROFILE TRACKING ---
-    const trackForm = document.getElementById('trackForm');
-    if (trackForm) {
-        trackForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const uciNumber = document.getElementById('uciInput').value.trim();
-            const output = document.getElementById('trackingResult');
-
-            try {
-                const res = await fetch(`${API_BASE}/auth/track`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uciNumber })
-                });
-                const data = await res.json();
-
-                if (res.ok) {
-                    output.style.display = 'block';
-                    output.innerHTML = `
-                        <h4 style="margin:0 0 10px 0; color:#111;">Profile Database Match: ${data.name}</h4>
-                        <p style="margin:5px 0;"><strong>Processing Status:</strong> <span style="color:#c8102e; font-weight:bold;">${data.status}</span></p>
-                        <p style="margin:5px 0; color:#555;"><strong>Officer Notes:</strong> ${data.adminNotes}</p>
-                    `;
-                } else {
-                    alert(`Query Fault: ${data.error}`);
-                }
-            } catch (err) {
-                alert('Failed to establish contact with database arrays.');
-            }
-        });
-    }
-});
+        } catch (err) {
+            alert('Could not pull tracking status parameters.');
+        }
+    });
+}
