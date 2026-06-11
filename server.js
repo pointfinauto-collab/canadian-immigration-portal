@@ -80,7 +80,12 @@ app.post('/api/auth/register', upload.fields([
 ]), async (req, res) => {
     try {
         const { fullName, dob, gender, nationality, passportNumber, countryOfResidence, phoneNumber, email, password } = req.body;
-        
+        const path = require('path');
+
+// Route to physically serve the admin.html file to your browser
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
         const userExists = await User.findOne({ email });
         if (userExists) return res.status(400).json({ message: 'Email already registered' });
 
