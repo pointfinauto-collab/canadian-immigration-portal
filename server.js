@@ -8,24 +8,24 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000; // Matches your cloud hosting deployment port
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
 // ==========================================
-// 1. GLOBAL PIPELINE MIDDLEWARES
+// 1. GLOBAL SYSTEM ROUTING & MEMORY CONTROLS
 // ==========================================
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '20mb' })); 
 app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
-// Ensure a safe temporary folder exists on the server disk for file spooling
+// Establish a permanent safe folder on disk to spool binary parts
 const uploadDir = path.join(__dirname, 'tmp_payloads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 // ==========================================
-// 2. DISK-STREAM MULTIPART CONFIGURATION
+// 2. MULTIPART PACKET SPOOL ENGINE
 // ==========================================
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -39,18 +39,24 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 } // 50MB ceiling per individual file asset
+    limits: { fileSize: 50 * 1024 * 1024 } // Strict 50MB protection ceiling
 });
 
 // ==========================================
+// 3. BULLETPROOF DATABASE CONNECTION ENGINE
 // ==========================================
-// UPDATED DATABASE ENGINE & DIAGNOSTICS
-// ==========================================
-const MONGO_URI = process.env.MONGO_URI || "YOUR_ACTUAL_MONGODB_CONNECTION_STRING_HERE";
+// TO FIX ENOTFOUND: If your srv string fails, replace this fallback with the 
+// Standard Connection String from Atlas (looks like: mongodb://username:password@ac-xxxx-shard-00-00.xxxx.mongodb.net:27017/...)
+const FALLBACK_CONNECTION_STRING = "mongodb+srv://testuser:testpass@cluster0.xxxx.mongodb.net/immigration?retryWrites=true&w=majority";
+const MONGO_URI = (process.env.MONGO_URI || FALLBACK_CONNECTION_STRING).trim();
 
 let bucket;
+
+console.log('⏳ Initializing connection to database cluster routing layer...');
+
 mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 5000 // Force a timeout after 5 seconds instead of hanging
+    serverSelectionTimeoutMS: 8000, // Break the connection hang after 8 seconds
+    connectTimeoutMS: 10000
 })
   .then(() => {
       console.log('🚀 ==========================================');
@@ -64,11 +70,16 @@ mongoose.connect(MONGO_URI, {
   .catch(err => {
       console.log('❌ ==========================================');
       console.log('❌ CRITICAL DATABASE CONNECTION FAULT!');
+      console.log('❌ ERROR TYPE:', err.code || 'UNKNOWN_CODE');
       console.log('❌ REASON:', err.message);
+      console.log('❌ HELP: If error is ENOTFOUND, go to Atlas -> Connect -> Drivers.');
+      console.log('❌ Toggle "Select your driver version" to Node.js ver 2.2.12 or older.');
+      console.log('❌ Copy the standard connection string format starting with "mongodb://" instead.');
       console.log('❌ ==========================================');
   });
+
 // ==========================================
-// 4. DATA SCHEMAS
+// 4. ARCHITECTURE BLUEPRINTS
 // ==========================================
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -99,13 +110,13 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 const Document = mongoose.models.Document || mongoose.model('Document', DocumentSchema);
 
 // ==========================================
-// 5. SECURE REGISTRATION & STREAMING PIPELINE
+// 5. TRANSACTION ROUTE MANAGEMENT
 // ==========================================
 app.post('/api/auth/register', upload.any(), async (req, res) => {
-    // Fail-safe: Ensure the database streaming layer is ready before accepting files
+    // Pipeline Fail-Safe System Check
     if (!bucket) {
         if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
-        return res.status(503).json({ error: 'Database subsystem is initializing. Please resubmit in 5 seconds.' });
+        return res.status(503).json({ error: 'Database subsystem is initializing or down. Please resubmit in a few seconds.' });
     }
 
     try {
@@ -147,7 +158,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                 'experience': 'Employment Reference & Experience Letters'
             };
 
-            // Process files sequentially using streams to avoid connection drop faults
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const specificType = typesArray[i] || 'supporting';
@@ -157,7 +167,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                         contentType: file.mimetype
                     });
 
-                    // Pipe the file straight from disk into the database stream pipeline
                     fs.createReadStream(file.path)
                         .pipe(uploadStream)
                         .on('error', (err) => reject(err))
@@ -173,7 +182,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                                 });
                                 await newDoc.save();
                                 
-                                // Safely erase the temporary file from the server disk
                                 if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
                                 resolve();
                             } catch (e) {
@@ -184,17 +192,14 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
             }
         }
 
-        res.status(201).json({ success: true, message: 'Application package compiled successfully.' });
+        res.status(201).json({ success: true, message: 'Application package processed cleanly.' });
     } catch (error) {
-        console.error('CRITICAL TRANSACTION FAULT:', error);
+        console.error('CRITICAL TRANSACTION FAULT SYSTEM LOG:', error);
         if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
-        res.status(500).json({ error: 'Internal storage transaction fault. The upload bundle size is too large for the current database tier.' });
+        res.status(500).json({ error: 'Internal storage transaction fault. Data streaming pipeline rejected.' });
     }
 });
 
-// ==========================================
-// 6. CORE APP AUTHENTICATION & OPERATIONS
-// ==========================================
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -212,11 +217,14 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/track', async (req, res) => {
     try {
         const record = await User.findOne({ uciNumber: req.body.uciNumber.trim() });
-        if (!record) return res.status(404).json({ error: 'UCI search query matched zero files.' });
+        if (!record) return res.status(404).json({ error: 'UCI search query matched zero records.' });
         res.json({ name: record.name, status: record.status, adminNotes: record.adminNotes });
     } catch (error) { res.status(500).json({ error: 'Tracking database lookup fault.' }); }
 });
 
+// ==========================================
+// 6. ADMINISTRATION SECURE POLICIES
+// ==========================================
 const checkAdmin = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -239,7 +247,7 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
             fullPackages.push(user);
         }
         res.json(fullPackages);
-    } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard." }); }
+    } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard matrix." }); }
 });
 
 app.get('/api/admin/document/:gridFileId', checkAdmin, async (req, res) => {
@@ -259,7 +267,7 @@ app.get('/api/admin/document/:gridFileId', checkAdmin, async (req, res) => {
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
-        if(!user) return res.status(404).json({ error: 'User missing.' });
+        if(!user) return res.status(404).json({ error: 'User file missing.' });
 
         const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
         const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
