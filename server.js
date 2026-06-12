@@ -43,21 +43,30 @@ const upload = multer({
 });
 
 // ==========================================
-// 3. DATABASE ENGINE & GRIDFS CONNECTION
 // ==========================================
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
+// UPDATED DATABASE ENGINE & DIAGNOSTICS
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI || "YOUR_ACTUAL_MONGODB_CONNECTION_STRING_HERE";
 
 let bucket;
-mongoose.connect(MONGO_URI)
+mongoose.connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 5000 // Force a timeout after 5 seconds instead of hanging
+})
   .then(() => {
-      console.log('🚀 Database Node Connected Successfully');
-      // Initialize the GridFS bucket driver directly inside the connected database
+      console.log('🚀 ==========================================');
+      console.log('🚀 DATABASE SUBSYSTEM ONLINE: Pipeline Connected cleanly.');
+      console.log('🚀 ==========================================');
+      
       bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
           bucketName: 'visa_payload_chunks'
       });
   })
-  .catch(err => console.error('❌ Database Sync Warning:', err.message));
-
+  .catch(err => {
+      console.log('❌ ==========================================');
+      console.log('❌ CRITICAL DATABASE CONNECTION FAULT!');
+      console.log('❌ REASON:', err.message);
+      console.log('❌ ==========================================');
+  });
 // ==========================================
 // 4. DATA SCHEMAS
 // ==========================================
