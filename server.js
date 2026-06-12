@@ -8,12 +8,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
-// 1. GLOBAL PRODUCTION MIDDLEWARE
+// MIDDLEWARE
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 2. MONGODB ATLAS CLUSTER CONNECTION WITH CRASH PROTECTION
+// DATABASE CONNECTION WITH FALLBACK PROTECTION
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
@@ -21,11 +21,17 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('🚀 Database Node Connected Successfully'))
   .catch(err => console.error('❌ Database Initialization Warning:', err.message));
 
-// 3. PERSISTENT DATA SCHEMAS
+// COMPLETE DESIGN USER SCHEMA
 const UserSchema = new mongoose.Schema({
-    name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
+    dob: { type: String, default: '' },
+    gender: { type: String, default: '' },
+    citizenship: { type: String, default: '' },
+    passportNumber: { type: String, default: '' },
+    residence: { type: String, default: '' },
+    phone: { type: String, default: '' },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     uciNumber: { type: String, unique: true },
     trackingRef: { type: String, unique: true },
@@ -37,16 +43,16 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
 // ==========================================
-// 4. CLIENT & AUTHENTICATION ENDPOINTS
+// API ENDPOINTS
 // ==========================================
 
 app.post('/api/auth/register', async (req, res) => {
     try {
-        const { name, email, password } = req.body;
-        if (!name || !email || !password) return res.status(400).json({ error: 'All fields are required.' });
+        const { name, email, password, dob, gender, citizenship, passportNumber, residence, phone } = req.body;
+        if (!name || !email || !password) return res.status(400).json({ error: 'Primary missing fields.' });
 
         const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
-        if (existingUser) return res.status(409).json({ error: 'An account with this email is already registered.' });
+        if (existingUser) return res.status(409).json({ error: 'Account already registered.' });
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -58,26 +64,20 @@ app.post('/api/auth/register', async (req, res) => {
         const role = (email.toLowerCase().trim() === systemAdminEmail) ? 'admin' : 'user';
 
         const newUser = new User({
-            name,
-            email: email.toLowerCase().trim(),
-            password: hashedPassword,
-            role,
-            uciNumber,
-            trackingRef
+            name, email: email.toLowerCase().trim(), password: hashedPassword,
+            dob, gender, citizenship, passportNumber, residence, phone, role, uciNumber, trackingRef
         });
 
         await newUser.save();
         res.status(201).json({ success: true, uciNumber, trackingRef });
     } catch (error) {
-        res.status(500).json({ error: 'Internal server registration failure.' });
+        res.status(500).json({ error: 'Server registration failure.' });
     }
 });
 
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ error: 'Missing login fields.' });
-
         const user = await User.findOne({ email: email.trim().toLowerCase() });
         if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
 
@@ -87,30 +87,24 @@ app.post('/api/auth/login', async (req, res) => {
         const token = jwt.sign({ id: user._id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '2h' });
         res.json({ success: true, token, role: user.role, name: user.name, uciNumber: user.uciNumber, trackingRef: user.trackingRef });
     } catch (error) {
-        res.status(500).json({ error: 'Server authentication subsystem error.' });
+        res.status(500).json({ error: 'Login error.' });
     }
 });
 
 app.post('/api/auth/track', async (req, res) => {
     try {
-        const { uciNumber } = req.body;
-        const record = await User.findOne({ uciNumber: uciNumber.trim() });
+        const record = await User.findOne({ uciNumber: req.body.uciNumber.trim() });
         if (!record) return res.status(404).json({ error: 'No matching records found.' });
         res.json({ name: record.name, status: record.status, adminNotes: record.adminNotes });
     } catch (error) {
-        res.status(500).json({ error: 'Query loop failure.' });
+        res.status(500).json({ error: 'Query error.' });
     }
 });
-
-// ==========================================
-// 5. PROTECTED ADMINISTRATIVE ENDPOINTS
-// ==========================================
 
 const checkAdmin = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Token missing.' });
-
+    if (!token) return res.status(401).json({ error: 'Missing token.' });
     jwt.verify(token, JWT_SECRET, (err, decoded) => {
         if (err || decoded.role !== 'admin') return res.status(403).json({ error: 'Unauthorized.' });
         req.user = decoded;
@@ -119,23 +113,21 @@ const checkAdmin = (req, res, next) => {
 };
 
 app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
-    try { res.json(await User.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json({ error: 'Failed.' }); }
+    res.json(await User.find().sort({ createdAt: -1 }));
 });
 
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
-    try {
-        const { id, status, adminNotes } = req.body;
-        await User.findByIdAndUpdate(id, { status, adminNotes });
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Failed.' }); }
+    await User.findByIdAndUpdate(req.body.id, { status: req.body.status, adminNotes: req.body.adminNotes });
+    res.json({ success: true });
 });
 
 app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
-    try { await User.findByIdAndDelete(req.params.id); res.json({ success: true }); } catch (err) { res.status(500).json({ error: 'Failed.' }); }
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
 });
 
 // ==========================================
-// 6. ALL-IN-ONE SYSTEM FRONTEND INTERFACE
+// RENDERING PREMIUM USER INTERFACE (`ffffffff.png`)
 // ==========================================
 
 app.get('/admin', (req, res) => {
@@ -145,27 +137,27 @@ app.get('/admin', (req, res) => {
     <head>
         <title>🔒 System Administration Panel</title>
         <style>
-            body { font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px; margin:0; }
-            .box { max-width: 1100px; margin: 30px auto; background: white; padding: 30px; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); border-top: 6px solid #333; }
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #f4f6f9; padding: 20px; margin:0; }
+            .box { max-width: 1200px; margin: 30px auto; background: white; padding: 30px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-top: 4px solid #c8102e; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 14px; }
-            th { background: #333; color: white; }
-            .save-btn { background: #2e7d32; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-weight: bold; }
-            .del-btn { background: #c8102e; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-weight: bold; }
+            th { background: #0f3460; color: white; }
+            .save-btn { background: #2e7d32; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; }
+            .del-btn { background: #c8102e; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; }
             select, textarea { width: 100%; padding: 5px; box-sizing: border-box; }
         </style>
     </head>
     <body>
         <div class="box">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h2>🔒 System Administration Panel</h2>
-                <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 12px; cursor:pointer;">Exit Console</button>
+                <h2>🔒 Portal Administrative Management Console</h2>
+                <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 12px; cursor:pointer; background:#333; color:#fff; border:none; border-radius:3px;">Log Out</button>
             </div>
             <table>
                 <thead>
-                    <tr><th>Applicant</th><th>Identifiers</th><th>Status Options</th><th>Officer Notes</th><th>Actions</th></tr>
+                    <tr><th>Applicant Metrics</th><th>Identifiers</th><th>Status Updates</th><th>Processing Notes</th><th>Actions</th></tr>
                 </thead>
-                <tbody id="rows"><tr><td colspan="5" style="text-align:center;">Loading directory registry matrix...</td></tr></tbody>
+                <tbody id="rows"><tr><td colspan="5" style="text-align:center;">Querying Database Records...</td></tr></tbody>
             </table>
         </div>
         <script>
@@ -174,17 +166,23 @@ app.get('/admin', (req, res) => {
 
             async function loadGrid() {
                 const res = await fetch('/api/admin/enrollments', { headers: { 'Authorization': 'Bearer ' + token } });
-                if (!res.ok) { alert('Session validation expired.'); return; }
+                if (!res.ok) { window.location.href='/'; return; }
                 const users = await res.json();
                 const tbody = document.getElementById('rows');
                 tbody.innerHTML = '';
                 
-                if(users.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No records inside database cluster.</td></tr>'; return; }
-                
                 users.forEach(u => {
                     const tr = document.createElement('tr');
                     tr.innerHTML = \`
-                        <td><strong>\${u.name}</strong><br>\${u.email}</td>
+                        <td>
+                            <strong>\${u.name}</strong><br>
+                            <span style="font-size:12px; color:#555;">
+                                Email: \${u.email}<br>
+                                DOB: \${u.dob || 'N/A'} | Gen: \${u.gender || 'N/A'}<br>
+                                Pass: \${u.passportNumber || 'N/A'}<br>
+                                Citizen: \${u.citizenship || 'N/A'}
+                            </span>
+                        </td>
                         <td>UCI: <strong>\${u.uciNumber || 'N/A'}</strong><br>Ref: <strong>\${u.trackingRef || 'N/A'}</strong></td>
                         <td>
                             <select id="s-\${u._id}">
@@ -195,9 +193,9 @@ app.get('/admin', (req, res) => {
                                 <option value="Refusal Issued" \${u.status === 'Refusal Issued'?'selected':''}>Refusal Issued</option>
                             </select>
                         </td>
-                        <td><textarea id="n-\${u._id}">\${u.adminNotes || ''}</textarea></td>
+                        <td><textarea id="n-\${u._id}" rows="3">\${u.adminNotes || ''}</textarea></td>
                         <td>
-                            <button class="save-btn" onclick="save('\${u._id}')">Save</button>
+                            <button class="save-btn" onclick="save('\${u._id}')">Save</button><br><br>
                             <button class="del-btn" onclick="del('\${u._id}')">Delete</button>
                         </td>
                     \`;
@@ -207,17 +205,19 @@ app.get('/admin', (req, res) => {
             async function save(id) {
                 const status = document.getElementById('s-'+id).value;
                 const adminNotes = document.getElementById('n-'+id).value;
-                const res = await fetch('/api/admin/decision', {
+                await fetch('/api/admin/decision', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify({ id, status, adminNotes })
                 });
-                if (res.ok) { alert('Record updated successfully.'); loadGrid(); }
+                alert('Database Updated.');
+                loadGrid();
             }
             async function del(id) {
-                if(!confirm('Purge record?')) return;
-                const res = await fetch('/api/admin/user/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
-                if (res.ok) { loadGrid(); }
+                if(confirm('Delete file entry?')) {
+                    await fetch('/api/admin/user/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+                    loadGrid();
+                }
             }
             window.onload = loadGrid;
         </script>
@@ -233,127 +233,227 @@ app.get('*', (req, res) => {
     <head>
         <title>Immigration and Secure Client Portal Terminal</title>
         <style>
-            body { font-family: Arial, sans-serif; padding: 30px; background: #ffffff; color: #000; }
-            .wrapper { max-width: 750px; margin: 0 auto; }
-            .gov-brand { font-size: 15px; color: #444; margin-bottom: 15px; text-transform: uppercase; letter-spacing:0.5px; }
-            h1 { font-family: Georgia, serif; font-size: 30px; font-weight: bold; margin-bottom: 25px; }
-            .nav-tabs { display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
-            .nav-tabs button { padding: 8px 16px; background: #efefef; border: 1px solid #767676; font-size: 14px; cursor: pointer; border-radius: 3px; font-weight: 500; }
-            .nav-tabs button:hover { background: #e5e5e5; }
-            .panel { display: none; }
+            body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: #ffffff; color: #333; margin: 0; padding: 0; }
+            
+            /* High Fidelity Header Layout matching ffffffff.png */
+            .gov-banner { background: #f5f5f5; border-bottom: 4px solid #c8102e; padding: 12px 40px; display: flex; align-items: center; gap: 20px; }
+            .gov-badge { background: #c8102e; color: white; padding: 6px 12px; font-weight: bold; font-size: 14px; border-radius: 3px; text-transform: uppercase; }
+            .portal-title { font-size: 18px; font-weight: bold; color: #222; }
+            
+            .content-container { max-width: 1000px; margin: 30px auto; padding: 0 20px; }
+            
+            /* Premium Tab Interface */
+            .tab-box { display: flex; gap: 5px; margin-bottom: 25px; background: #eef2f5; padding: 8px; border-radius: 4px; }
+            .tab-box button { padding: 10px 20px; background: transparent; border: none; font-size: 14px; font-weight: bold; cursor: pointer; color: #444; border-radius: 4px; transition: all 0.2s; }
+            .tab-box button.active { background: #0f3460; color: white; }
+            
+            .panel { display: none; background: #ffffff; border: 1px solid #dcdcdc; border-radius: 4px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
             .panel.active { display: block; }
-            .form-group { margin-bottom: 15px; display: flex; align-items: center; }
-            label { width: 220px; font-size: 15px; font-weight: bold; }
-            input { padding: 6px 10px; width: 320px; border: 1px solid #767676; font-size: 14px; border-radius: 2px; }
-            .action-btn { padding: 6px 16px; background: #efefef; border: 1px solid #767676; font-size: 14px; cursor: pointer; border-radius: 3px; margin-top: 15px; }
-            .action-btn:hover { background: #e5e5e5; }
-            .status-box { display: none; margin-top: 25px; padding: 20px; border-left: 5px solid #c8102e; background: #f9f9f9; max-width: 550px; }
+            
+            h2 { font-size: 22px; color: #0f3460; margin-top: 0; border-bottom: 2px solid #eef2f5; padding-bottom: 10px; margin-bottom: 20px; }
+            h3 { font-size: 15px; color: #333; margin-top: 20px; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+            
+            /* Responsive Grid Form Layout */
+            .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px 20px; margin-bottom: 15px; }
+            @media(max-width: 768px){ .form-grid { grid-template-columns: 1fr; } }
+            
+            .field-group { display: flex; flex-direction: column; }
+            label { font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #444; }
+            input, select { padding: 8px 12px; border: 1px solid #b5b5b5; font-size: 14px; border-radius: 4px; width: 100%; box-sizing: border-box; }
+            input:focus, select:focus { border-color: #0f3460; outline: none; }
+            
+            .submit-btn { padding: 10px 24px; background: #0f3460; color: white; border: none; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; margin-top: 15px; transition: background 0.2s; }
+            .submit-btn:hover { background: #16467a; }
+            
+            .status-display { display: none; margin-top: 25px; padding: 20px; border-left: 6px solid #c8102e; background: #f8fafc; border-radius: 4px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; }
         </style>
     </head>
     <body>
-        <div class="wrapper">
-            <div class="gov-brand">Government of Canada</div>
-            <h1>Immigration and Secure Client Portal Terminal</h1>
-            
-            <div class="nav-tabs">
-                <button type="button" onclick="showPanel('loginPanel')">Access Existing Account</button>
-                <button type="button" onclick="showPanel('registerPanel')">Create Secure Account Profiling File</button>
-                <button type="button" onclick="showPanel('trackPanel')">Track File Status</button>
+
+        <div class="gov-banner">
+            <div class="gov-badge">Government of Canada</div>
+            <div class="portal-title">Immigration and Secure Client Portal Terminal</div>
+        </div>
+        
+        <div class="content-container">
+            <div class="tab-box">
+                <button type="button" id="btn-login" class="active" onclick="setView('loginPanel', 'btn-login')">Access Existing Account</button>
+                <button type="button" id="btn-register" onclick="setView('registerPanel', 'btn-register')">Create Secure Account Profiling File</button>
+                <button type="button" id="btn-track" onclick="setView('trackPanel', 'btn-track')">Track File Status</button>
             </div>
 
             <div id="loginPanel" class="panel active">
                 <h2>Account Secure Gateway Sign-In</h2>
                 <form id="lForm">
-                    <div class="form-group"><label>Email Address</label><input type="email" id="lEmail" required></div>
-                    <div class="form-group"><label>Account Security Password</label><input type="password" id="lPass" required></div>
-                    <button type="submit" class="action-btn">Verify and Sign In</button>
+                    <div style="max-width: 400px;">
+                        <div class="field-group" style="margin-bottom:15px;">
+                            <label>Email Address</label>
+                            <input type="email" id="lEmail" required>
+                        </div>
+                        <div class="field-group" style="margin-bottom:15px;">
+                            <label>Account Security Password</label>
+                            <input type="password" id="lPass" required>
+                        </div>
+                        <button type="submit" class="submit-btn">Verify and Sign In</button>
+                    </div>
                 </form>
             </div>
 
             <div id="registerPanel" class="panel">
-                <h2>Create Secure Account File Registry</h2>
+                <h2>Secure System Enrollment Registry</h2>
                 <form id="rForm">
-                    <div class="form-group"><label>Legal Full Name</label><input type="text" id="rName" required></div>
-                    <div class="form-group"><label>Email Address</label><input type="email" id="rEmail" required></div>
-                    <div class="form-group"><label>Account Security Password</label><input type="password" id="rPass" required></div>
-                    <button type="submit" class="action-btn">Execute Processing Enrollment Registry</button>
+                    
+                    <h3>Personal File Metrics</h3>
+                    <div class="form-grid">
+                        <div class="field-group">
+                            <label>Legal Full Name (As written in Passport)</label>
+                            <input type="text" id="rName" required placeholder="e.g. John Doe">
+                        </div>
+                        <div class="field-group">
+                            <label>Date of Birth</label>
+                            <input type="date" id="rDob" required>
+                        </div>
+                        <div class="field-group">
+                            <label>Gender File Metric</label>
+                            <select id="rGender">
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label>Country of Core Citizenship Nationality</label>
+                            <input type="text" id="rCitizenship" required>
+                        </div>
+                        <div class="field-group">
+                            <label>Passport Document Serial Number</label>
+                            <input type="text" id="rPassport" required>
+                        </div>
+                        <div class="field-group">
+                            <label>Current Legal Country of Residence</label>
+                            <input type="text" id="rResidence" required>
+                        </div>
+                    </div>
+
+                    <h3>Contact Parameters & Secure Access Setup</h3>
+                    <div class="form-grid">
+                        <div class="field-group">
+                            <label>Primary Telephone Contact Base Line</label>
+                            <input type="text" id="rPhone" required>
+                        </div>
+                        <div class="field-group">
+                            <label>Account Communication Email Access Point</label>
+                            <input type="email" id="rEmail" required>
+                        </div>
+                        <div class="field-group">
+                            <label>Create Security Access Password</label>
+                            <input type="password" id="rPass" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="submit-btn">Execute Processing Enrollment Registry</button>
                 </form>
             </div>
 
             <div id="trackPanel" class="panel">
                 <h2>File Status Tracking Gateway</h2>
                 <form id="tForm">
-                    <div class="form-group"><label>Unique Client ID (UCI)</label><input type="text" id="tUci" placeholder="UCI-XXXXXXXX" required></div>
-                    <button type="submit" class="action-btn">Query Directory Archives</button>
+                    <div style="max-width:400px;">
+                        <div class="field-group">
+                            <label>Unique Client ID (UCI)</label>
+                            <input type="text" id="tUci" placeholder="UCI-XXXXXXXX" required>
+                        </div>
+                        <button type="submit" class="submit-btn">Query Directory Archives</button>
+                    </div>
                 </form>
-                <div id="tResult" class="status-box"></div>
+                <div id="tResult" class="status-display"></div>
             </div>
         </div>
 
         <script>
-            function showPanel(id) {
+            function setView(panelId, btnId) {
                 document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-                document.getElementById(id).classList.add('active');
+                document.querySelectorAll('.tab-box button').forEach(b => b.classList.remove('active'));
+                
+                document.getElementById(panelId).classList.add('active');
+                document.getElementById(btnId).classList.add('active');
             }
 
-            // Handle Register
+            // REGISTER SYSTEM REQUEST LOOP
             document.getElementById('rForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const res = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: document.getElementById('rName').value,
-                        email: document.getElementById('rEmail').value,
-                        password: document.getElementById('rPass').value
-                    })
-                });
-                const data = await res.json();
-                if(res.ok && data.success) {
-                    alert('🎉 Profile Created Successfully!\\n\\nSave your login tracking details:\\nUCI ID: ' + data.uciNumber + '\\nTracking Ref: ' + data.trackingRef);
-                    document.getElementById('rForm').reset();
-                    showPanel('loginPanel');
-                } else { alert('Error: ' + data.error); }
+                const btn = e.target.querySelector('button');
+                btn.innerText = "Transmitting Core File Registry...";
+                btn.disabled = true;
+
+                try {
+                    const res = await fetch('/api/auth/register', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: document.getElementById('rName').value,
+                            dob: document.getElementById('rDob').value,
+                            gender: document.getElementById('rGender').value,
+                            citizenship: document.getElementById('rCitizenship').value,
+                            passportNumber: document.getElementById('rPassport').value,
+                            residence: document.getElementById('rResidence').value,
+                            phone: document.getElementById('rPhone').value,
+                            email: document.getElementById('rEmail').value,
+                            password: document.getElementById('rPass').value
+                        })
+                    });
+                    const data = await res.json();
+                    if(res.ok && data.success) {
+                        alert('🎉 Security Registry File Generated Successfully!\\n\\nSave your official application tracking IDs:\\nUCI File ID: ' + data.uciNumber + '\\nTracking Reference: ' + data.trackingRef);
+                        document.getElementById('rForm').reset();
+                        setView('loginPanel', 'btn-login');
+                    } else { alert('Registry Blocked: ' + data.error); }
+                } catch(err) { alert('Network connection lost.'); }
+                finally { btn.innerText = "Execute Processing Enrollment Registry"; btn.disabled = false; }
             });
 
-            // Handle Login
+            // LOGIN SYSTEM REQUEST LOOP
             document.getElementById('lForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: document.getElementById('lEmail').value,
-                        password: document.getElementById('lPass').value
-                    })
-                });
-                const data = await res.json();
-                if(res.ok && data.success) {
-                    localStorage.setItem('adminToken', data.token);
-                    localStorage.setItem('userRole', data.role);
-                    if(data.role === 'admin') {
-                        alert('🔑 Admin Verified. Redirecting...');
-                        window.location.href = '/admin';
-                    } else {
-                        alert('Welcome back, ' + data.name + '\\nUCI: ' + data.uciNumber + '\\nRef: ' + data.trackingRef);
-                    }
-                } else { alert('Access Refused: ' + data.error); }
+                try {
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: document.getElementById('lEmail').value,
+                            password: document.getElementById('lPass').value
+                        })
+                    });
+                    const data = await res.json();
+                    if(res.ok && data.success) {
+                        localStorage.setItem('adminToken', data.token);
+                        localStorage.setItem('userRole', data.role);
+                        if(data.role === 'admin') {
+                            alert('🔑 Administrative Access Granted. Launching Panel Interface Console...');
+                            window.location.href = '/admin';
+                        } else {
+                            alert('Identity Verification Approved!\\n\\nHolder: ' + data.name + '\\nUCI: ' + data.uciNumber + '\\nRef: ' + data.trackingRef);
+                        }
+                    } else { alert('Access Denied: ' + data.error); }
+                } catch(err) { alert('Server query exception loop.'); }
             });
 
-            // Handle Track
+            // TRACK SYSTEM REQUEST LOOP
             document.getElementById('tForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const res = await fetch('/api/auth/track', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uciNumber: document.getElementById('tUci').value })
-                });
-                const data = await res.json();
-                const out = document.getElementById('tResult');
-                if(res.ok) {
-                    out.style.display = 'block';
-                    out.innerHTML = '<h3>File Status Profile: ' + data.name + '</h3><p><strong>Status:</strong> ' + data.status + '</p><p><strong>Officer Notes:</strong> ' + data.adminNotes + '</p>';
-                } else { alert('Query Failed: ' + data.error); }
+                try {
+                    const res = await fetch('/api/auth/track', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ uciNumber: document.getElementById('tUci').value })
+                    });
+                    const data = await res.json();
+                    const out = document.getElementById('tResult');
+                    if(res.ok) {
+                        out.style.display = 'block';
+                        out.innerHTML = '<h3 style="color:#0f3460; margin-top:0;">File Identity Verified: ' + data.name + '</h3><p style="font-size:15px;"><strong>Processing File Status:</strong> <span style="color:#c8102e; font-weight:bold;">' + data.status + '</span></p><p style="color:#555; font-size:14px; background:#fff; padding:10px; border:1px solid #e2e8f0;"><strong>Officer Remarks:</strong> ' + data.adminNotes + '</p>';
+                    } else { alert('Tracking Search Failed: ' + data.error); }
+                } catch(err) { alert('Failed to query repository indices.'); }
             });
         </script>
     </body>
