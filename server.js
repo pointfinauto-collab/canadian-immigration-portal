@@ -18,10 +18,10 @@ app.use(express.urlencoded({ limit: '150mb', extended: true }));
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 100 * 1024 * 1024 } // Expanded to a massive 100MB per individual file
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB per individual file asset ceiling
 });
 
-// DATABASE ENGINE CONNECTION WITH GRIDFS CONTROLLER OVERLAYS
+// DATABASE ENGINE CONNECTION WITH GRIDFS CHUNK STREAMS
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
@@ -29,7 +29,7 @@ let bucket;
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('🚀 Database Node Connected Successfully');
-      // Initialize GridFS Bucket for chunked asset processing
+      // Set up the chunk storage layout configuration 
       bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
           bucketName: 'visa_payload_chunks'
       });
@@ -37,7 +37,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('❌ Database Sync Warning:', err.message));
 
 // ==========================================
-// OPTIMIZED BLUEPRINT SCHEMATICS
+// OPTIMIZED PROFILE & METADATA SCHEMAS
 // ==========================================
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -54,10 +54,9 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Stores file metadata and points securely to GridFS chunk streams
 const DocumentSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    gridFileId: { type: mongoose.Schema.Types.ObjectId, required: true }, // Points to GridFS Chunks
+    gridFileId: { type: mongoose.Schema.Types.ObjectId, required: true }, 
     docType: { type: String, required: true },
     docLabel: { type: String, required: true },
     fileName: { type: String, required: true },
@@ -69,7 +68,7 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 const Document = mongoose.models.Document || mongoose.model('Document', DocumentSchema);
 
 // ==========================================
-// BULLETPROOF TRANSACTIONS (GRIDFS DRIVEN)
+// BACKEND ROUTING ENDPOINTS
 // ==========================================
 
 app.post('/api/auth/register', upload.any(), async (req, res) => {
@@ -108,7 +107,7 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                 'experience': 'Employment Reference & Experience Letters'
             };
 
-            // Stream files directly into GridFS Chunks (Bypasses 16MB document limitations completely)
+            // Process uploads cleanly via asynchronous streams
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const specificType = typesArray[i] || 'supporting';
@@ -117,7 +116,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                     contentType: file.mimetype
                 });
                 
-                // Write the file buffer data straight into the database stream pipeline
                 uploadStream.write(file.buffer);
                 uploadStream.end();
 
@@ -133,7 +131,7 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
             }
         }
 
-        res.status(201).json({ success: true, message: 'Application package processed cleanly through chunk streams.' });
+        res.status(201).json({ success: true, message: 'Application package processed cleanly.' });
     } catch (error) {
         console.error('STREAM FAULT:', error);
         res.status(500).json({ error: 'Internal storage transaction fault.' });
@@ -187,19 +185,24 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard." }); }
 });
 
-// DYNAMIC ON-THE-FLY FILE RE-ASSEMBLY FOR DOWNLOADING
+// CORRECTED STREAM INTERCEPTOR CONFIGURATION
 app.get('/api/admin/document/:gridFileId', checkAdmin, async (req, res) => {
     try {
         const fileId = new mongoose.Types.ObjectId(req.params.gridFileId);
+        res.setHeader('Content-Type', 'application/octet-stream');
         const downloadStream = bucket.openDownloadStream(fileId);
         
-        // Pass the re-assembled file chunks directly back to the browser console stream
+        downloadStream.on('error', () => {
+            return res.status(444).send("Target stream asset lost.");
+        });
+        
         downloadStream.pipe(res);
     } catch (err) {
-        res.status(444).send("Target stream asset lost.");
+        res.status(500).send("Stream mapping error.");
     }
 });
 
+// FIXED TYPO IN THE RESOLUTION OBJECT CONTEXT
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
@@ -211,7 +214,7 @@ app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
         user.uciNumber = uciNumber;
         user.trackingRef = trackingRef;
         user.status = "Under Active Officer Review (UCI Dispatched)";
-        user.adminNotes = `Profile assigned Unique Client ID (UCI): ${uicNumber || uciNumber}. Direct tracking updates are open.`;
+        user.adminNotes = `Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct tracking updates are open.`;
         
         await user.save();
         res.json({ success: true, uciNumber, trackingRef });
@@ -229,7 +232,9 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
     try {
         const docs = await Document.find({ userId: req.params.id });
         for(let doc of docs) {
-            await bucket.delete(doc.gridFileId); // Wipe binary chunk fragments from database completely
+            try {
+                await bucket.delete(doc.gridFileId);
+            } catch(e) { /* Ignore if already deleted */ }
         }
         await Document.deleteMany({ userId: req.params.id });
         await User.findByIdAndDelete(req.params.id);
@@ -238,7 +243,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// SYSTEM VIEW CHANNELS
+// SYSTEM VIEW CHANNELS (ADMIN INTERFACE)
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -259,7 +264,7 @@ app.get('/admin', (req, res) => {
             .badge { display: inline-block; padding: 4px 8px; font-weight: bold; font-size: 11px; border-radius: 3px; text-transform: uppercase; background: #777; color: white; margin-bottom: 5px; }
             .uci-btn { background: #d9534f; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; text-transform: uppercase; font-size: 11px; margin-bottom:5px;}
             .save-btn { background: #264a28; color: white; border: none; padding: 8px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 6px; border-radius: 4px; }
-            .file-btn { display: block; background: #2572b4; color: white; text-decoration: none; padding: 4px 8px; font-size: 11px; font-weight: bold; margin-top: 4px; border-radius: 3px; text-align: center; }
+            .file-btn { display: block; background: #2572b4; color: white; text-decoration: none; padding: 6px 8px; font-size: 11px; font-weight: bold; margin-top: 4px; border-radius: 3px; text-align: center; }
             select, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #767676; border-radius: 4px; }
         </style>
     </head>
@@ -299,12 +304,11 @@ app.get('/admin', (req, res) => {
                     let filesHtml = '';
                     if(u.documents && u.documents.length > 0) {
                         u.documents.forEach(doc => {
-                            // Direct streaming link mapping safely via token authentication validation checks
                             filesHtml += \`
                                 <div style="margin-bottom:6px; background:#f8fafc; padding:6px; border:1px solid #cbd5e1; border-left:3px solid #2572b4; border-radius:3px;">
                                     <strong style="font-size:12px; color:#1e293b;">\${doc.docLabel}</strong><br>
                                     <span style="font-size:11px; color:#64748b; word-break:break-all;">File: \${doc.fileName}</span>
-                                    <button class="file-btn" style="width:100%; border:none;" onclick="downloadStreamFile('\${doc.gridFileId}', '\${doc.fileName}')">💾 Download File</button>
+                                    <button class="file-btn" style="width:100%; border:none; cursor:pointer;" onclick="downloadStreamFile('\${doc.gridFileId}', '\${doc.fileName}')">💾 Download File</button>
                                 </div>
                             \`;
                         });
