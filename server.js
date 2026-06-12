@@ -41,11 +41,12 @@ const UserSchema = new mongoose.Schema({
     residence: { type: String, default: '' },
     phone: { type: String, default: '' },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
-    uciNumber: { type: String, unique: true },
-    trackingRef: { type: String, unique: true },
-    status: { type: String, default: 'Submitted / Review Pending' },
-    adminNotes: { type: String, default: 'Your application file is undergoing preliminary verification.' },
-    attachedFile: { type: String, default: '' },     // Base64 string
+    // Altered Workflow States: Generated on Case Officer Directive
+    uciNumber: { type: String, default: null, sparse: true }, 
+    trackingRef: { type: String, default: null, sparse: true },
+    status: { type: String, default: 'Awaiting Initial Review (UCI Pending)' },
+    adminNotes: { type: String, default: 'Your profile registration has been received. A case officer is reviewing your uploaded identification documents to generate your official Unique Client ID (UCI).' },
+    attachedFile: { type: String, default: '' },     
     attachedFileName: { type: String, default: '' }, 
     attachedMimeType: { type: String, default: '' }, 
     createdAt: { type: Date, default: Date.now }
@@ -57,6 +58,7 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 // API TRANSACTION LOGIC ENDPOINTS
 // ==========================================
 
+// Client initial profiling Intake path
 app.post('/api/auth/register', upload.single('clientDocument'), async (req, res) => {
     try {
         const { name, email, password, dob, gender, citizenship, passportNumber, residence, phone } = req.body;
@@ -67,9 +69,6 @@ app.post('/api/auth/register', upload.single('clientDocument'), async (req, res)
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-
-        const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
-        const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
 
         const systemAdminEmail = (process.env.SYSTEM_ADMIN_EMAIL || 'admin@portal.com').toLowerCase().trim();
         const role = (email.toLowerCase().trim() === systemAdminEmail) ? 'admin' : 'user';
@@ -86,14 +85,15 @@ app.post('/api/auth/register', upload.single('clientDocument'), async (req, res)
 
         const newUser = new User({
             name, email: email.toLowerCase().trim(), password: hashedPassword,
-            dob, gender, citizenship, passportNumber, residence, phone, role, uciNumber, trackingRef,
+            dob, gender, citizenship, passportNumber, residence, phone, role,
             attachedFile, attachedFileName, attachedMimeType
+            // UCI and trackingRef left unassigned intentionally for Officer assignment
         });
 
         await newUser.save();
-        res.status(201).json({ success: true, uciNumber, trackingRef });
+        res.status(201).json({ success: true, message: 'Intake profile created. Awaiting UCI Generation.' });
     } catch (error) {
-        res.status(500).json({ error: 'Registration pipeline failure.' });
+        res.status(500).json({ error: 'Registration intake pipeline failure.' });
     }
 });
 
@@ -107,19 +107,24 @@ app.post('/api/auth/login', async (req, res) => {
         if (!validPassword) return res.status(401).json({ error: 'Invalid credentials.' });
 
         const token = jwt.sign({ id: user._id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '2h' });
-        res.json({ success: true, token, role: user.role, name: user.name, uciNumber: user.uciNumber, trackingRef: user.trackingRef });
+        res.json({ success: true, token, role: user.role, name: user.name, uciNumber: user.uciNumber });
     } catch (error) {
         res.status(500).json({ error: 'Login verification error.' });
     }
 });
 
+// Direct tracking verification endpoint matching against Admin-generated UCI codes
 app.post('/api/auth/track', async (req, res) => {
     try {
-        const record = await User.findOne({ uciNumber: req.body.uciNumber.trim() });
-        if (!record) return res.status(404).json({ error: 'No matching records found.' });
+        const targetUCI = req.body.uciNumber.trim();
+        if(!targetUCI) return res.status(400).json({ error: 'UCI string missing.' });
+
+        const record = await User.findOne({ uciNumber: targetUCI });
+        if (!record) return res.status(404).json({ error: 'No matching records found for this issued UCI.' });
+        
         res.json({ name: record.name, status: record.status, adminNotes: record.adminNotes });
     } catch (error) {
-        res.status(500).json({ error: 'Query execution error.' });
+        res.status(500).json({ error: 'Tracking file directory lookup error.' });
     }
 });
 
@@ -128,7 +133,7 @@ const checkAdmin = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Missing token.' });
     jwt.verify(token, JWT_SECRET, (err, decoded) => {
-        if (err || decoded.role !== 'admin') return res.status(403).json({ error: 'Unauthorized configuration clearance.' });
+        if (err || decoded.role !== 'admin') return res.status(403).json({ error: 'Unauthorized administrative access.' });
         req.user = decoded;
         next();
     });
@@ -138,6 +143,39 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
     res.json(await User.find().sort({ createdAt: -1 }));
 });
 
+// Admin command: Generate unique UCI identifier vectors and dispatch email stream trigger
+app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
+    try {
+        const user = await User.findById(req.body.id);
+        if(!user) return res.status(404).json({ error: 'User not found' });
+        
+        if(user.uciNumber) return res.status(400).json({ error: 'UCI already issued for this file entry.' });
+
+        // Generate official corporate parameters
+        const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
+        const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
+
+        user.uciNumber = uciNumber;
+        user.trackingRef = trackingRef;
+        user.status = "Under Active Officer Review (UCI Dispatched)";
+        user.adminNotes = `Official profile identification generated. Your verified application profile has been allocated Unique Client ID: ${uciNumber}. Direct status tracking is now active.`;
+        
+        await user.save();
+
+        console.log(`✉️ Simulated Government Email Transmission Triggered Successfully:
+        To: ${user.email}
+        Subject: Official Immigration Profile Notice - UCI Issued
+        Body: Hello ${user.name}, your tracking clearance profile has been approved. 
+        Your Official Unique Client ID (UCI) is: ${uciNumber}
+        You can now input this code directly into the Status Gateway to review your file status details.`);
+
+        res.json({ success: true, uciNumber, trackingRef });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to execute structural UCI generation.' });
+    }
+});
+
+// Admin Command: Commit regular status changes/officer notes
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
     try {
         await User.findByIdAndUpdate(req.body.id, { 
@@ -146,7 +184,7 @@ app.post('/api/admin/decision', checkAdmin, async (req, res) => {
         });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to update decision' });
+        res.status(500).json({ error: 'Failed to update adjudication decision parameters' });
     }
 });
 
@@ -156,7 +194,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// HIGH-FIDELITY OFFICIAL ADMIN CONSOLE
+// CASE OFFICER DECISION CONSOLE
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -170,66 +208,52 @@ app.get('/admin', (req, res) => {
             .gov-header { background: #fff; border-bottom: 2px solid #e16262; padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
             .brand-text { font-size: 22px; font-weight: 700; color: #333; font-family: "Helvetica Neue", Helvetica, sans-serif;}
             .red-flag { color: #c8102e; }
-            .box { max-width: 1500px; margin: 30px auto; background: white; padding: 30px; border: 1px solid #dcdee1; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+            .box { max-width: 1550px; margin: 30px auto; background: white; padding: 30px; border: 1px solid #dcdee1; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
             h2 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; border-bottom: 2px solid #333; padding-bottom: 12px; color: #222; margin-top: 0; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th, td { padding: 14px; text-align: left; border-bottom: 1px solid #dcdcdc; font-size: 14px; vertical-align: top; }
             th { background: #26374a; color: white; font-weight: 600; }
             tr:nth-child(even) { background: #f8fafc; }
             
-            /* Status Badge Styles */
             .badge { display: inline-block; padding: 4px 8px; font-weight: bold; font-size: 11px; border-radius: 3px; text-transform: uppercase; margin-bottom: 5px; }
-            .badge-pending { background: #f0ad4e; color: #fff; }
+            .badge-pending { background: #777; color: #fff; }
             .badge-active { background: #0275d8; color: #fff; }
             .badge-approved { background: #5cb85c; color: #fff; }
             .badge-refused { background: #d9534f; color: #fff; }
 
+            .uci-btn { background: #d9534f; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 4px; cursor: pointer; border-bottom: 2px solid #b52b27; margin-bottom: 5px; width: 100%; text-transform: uppercase; font-size: 11px; letter-spacing: 0.3px;}
+            .uci-btn:hover { background: #b52b27; }
             .save-btn { background: #264a28; color: white; border: none; padding: 8px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 6px; border-radius: 4px; border-bottom: 2px solid #142815; }
             .save-btn:hover { background: #19331b; }
             .del-btn { background: #bc1c1c; color: white; border: none; padding: 6px 14px; cursor: pointer; font-size: 12px; width: 100%; border-radius: 4px; }
-            .file-btn { display: inline-block; background: #2572b4; color: white; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; margin-top: 5px; border-radius: 4px; text-align: center; border-bottom: 2px solid #184b78; }
-            .file-btn:hover { background: #184b78; }
+            .file-btn { display: inline-block; background: #2572b4; color: white; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; margin-top: 5px; border-radius: 4px; text-align: center; border-bottom: 2px solid #184b78; width: 100%; box-sizing: border-box; }
             
             select, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #767676; border-radius: 4px; font-size: 13px; }
-            textarea { resize: vertical; }
-
-            /* Image Preview Modal */
-            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); justify-content: center; align-items: center; }
-            .modal-content { background: white; padding: 20px; max-width: 80%; max-height: 80%; overflow: auto; border-radius: 4px; text-align: center; }
-            .modal-close { background: #333; color: white; border: none; padding: 8px 16px; cursor: pointer; margin-top: 15px; font-weight: bold; border-radius: 4px; }
         </style>
     </head>
     <body>
         <div class="gov-header">
-            <div class="brand-text">Government of Can<span class="red-flag">ada</span> — Case Officer Core</div>
+            <div class="brand-text">Government of Can<span class="red-flag">ada</span> — Case Officer Adjudication Engine</div>
             <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;">Sign Out</button>
         </div>
         
         <div class="box">
-            <h2>📋 Document Under Review & System Adjudication Terminal</h2>
-            <p style="margin-top:-5px; color:#555;">Review client profile metrics, inspect data payloads, update application status vectors, and issue adjudication text lines in real-time.</p>
+            <h2>📋 Case Ingestion & Dynamic UCI Assignment Hub</h2>
+            <p style="margin-top:-5px; color:#555;">Review submitted data profiles, verify uploaded identity pages, generate Unique Client ID (UCI) metrics to dispatch automated email notices, and adjust review criteria parameters.</p>
             
             <table>
                 <thead>
                     <tr>
-                        <th style="width:22%;">Applicant Identity Metrics</th>
-                        <th style="width:20%;">Uploaded Payload Node</th>
-                        <th style="width:18%;">Registry Identifiers</th>
-                        <th style="width:18%;">Adjudication Decision</th>
-                        <th style="width:14%;">Case Officer Remarks</th>
+                        <th style="width:22%;">Applicant Intake Identity</th>
+                        <th style="width:18%;">Identity Documents</th>
+                        <th style="width:20%;">Allocated System Identifiers</th>
+                        <th style="width:16%;">Status Pipeline</th>
+                        <th style="width:14%;">Visible Client Remarks</th>
                         <th style="width:10%;">Directives</th>
                     </tr>
                 </thead>
                 <tbody id="rows"><tr><td colspan="6" style="text-align:center;">Querying Secure Database Streams...</td></tr></tbody>
             </table>
-        </div>
-
-        <div id="fileModal" class="modal">
-            <div class="modal-content">
-                <h3 id="modalTitle" style="margin-top:0; color:#26374a;">Document Viewer</h3>
-                <div id="modalBody"></div>
-                <button class="modal-close" onclick="closeModal()">Close Document Window</button>
-            </div>
         </div>
 
         <script>
@@ -244,25 +268,30 @@ app.get('/admin', (req, res) => {
                 tbody.innerHTML = '';
                 
                 users.forEach(u => {
+                    if(u.role === 'admin') return; // Skip showing administrators
                     const tr = document.createElement('tr');
                     
-                    // Dynamic status styling badge
                     let badgeClass = 'badge-pending';
                     if(u.status.includes('Approved')) badgeClass = 'badge-approved';
                     if(u.status.includes('Refusal')) badgeClass = 'badge-refused';
-                    if(u.status.includes('Active') || u.status.includes('Biometrics')) badgeClass = 'badge-active';
+                    if(u.status.includes('Review') || u.status.includes('Biometrics')) badgeClass = 'badge-active';
 
-                    // Document interactive processing node
                     let fileSectionHtml = '<span style="color:#777; font-style:italic;">No attachment submitted</span>';
                     if (u.attachedFile) {
-                        const isImg = u.attachedMimeType.includes('image');
                         fileSectionHtml = \`
                             <div>
-                                📁 <span style="font-size:12px; font-weight:bold; color:#222;">\${u.attachedFileName}</span><br>
-                                <button class="file-btn" onclick="viewFile('\${u.attachedFile}', '\${u.attachedMimeType}', '\${u.attachedFileName}')">🔎 Inspect Document</button>
-                                <a class="file-btn" style="background:#555; border-bottom-color:#333;" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">💾 Download</a>
+                                📁 <span style="font-size:12px; font-weight:bold; color:#222; word-break:break-all;">\${u.attachedFileName}</span><br>
+                                <a class="file-btn" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">💾 Download & Review</a>
                             </div>
                         \`;
+                    }
+
+                    // Conditional rendering of the "Generate UCI & Email Client" module button block
+                    let uciActionColumnHtml = '';
+                    if (!u.uciNumber) {
+                        uciActionColumnHtml = \`<button class="uci-btn" onclick="generateUCI('\${u._id}')">🎟️ Issue UCI & Email</button>\`;
+                    } else {
+                        uciActionColumnHtml = \`<span style="color:#264a28; font-weight:bold; font-size:12px;">✅ UCI Active & Mailed</span>\`;
                     }
 
                     tr.innerHTML = \`
@@ -270,62 +299,56 @@ app.get('/admin', (req, res) => {
                             <strong>\${u.name}</strong><br>
                             <span style="font-size:12px; color:#555; line-height:1.4;">
                                 Email: <code>\${u.email}</code><br>
-                                Birthdate: \${u.dob || 'N/A'}<br>
-                                Gender Metric: \${u.gender || 'N/A'}<br>
-                                Citizenship: <strong>\${u.citizenship || 'N/A'}</strong>
+                                Birth: \${u.dob || 'N/A'} | Origin: <strong>\${u.citizenship || 'N/A'}</strong>
                             </span>
                         </td>
                         <td>\${fileSectionHtml}</td>
                         <td>
                             <span class="badge \${badgeClass}">\${u.status}</span><br>
-                            UCI ID: <code>\${u.uciNumber || 'N/A'}</code><br>
+                            UCI ID: <code style="font-size:13px; font-weight:bold; color:#bc1c1c;">\${u.uciNumber || 'PENDING GENERATION'}</code><br>
                             Ref Key: <code>\${u.trackingRef || 'N/A'}</code><br>
                             Passport Serial: <strong>\${u.passportNumber || 'N/A'}</strong>
                         </td>
                         <td>
-                            <label style="font-size:11px; font-weight:bold; color:#555;">Adjudication Vector Selection:</label>
-                            <select id="s-\${u._id}" style="margin-top:3px;">
-                                <option value="Submitted / Review Pending" \${u.status === 'Submitted / Review Pending'?'selected':''}>Submitted / Review Pending</option>
-                                <option value="Under Active Officer Review" \${u.status === 'Under Active Officer Review'?'selected':''}>Under Active Officer Review</option>
-                                <option value="Biometrics Verification Stage" \${u.status === 'Biometrics Verification Stage'?'selected':''}>Biometrics Verification Stage</option>
-                                <option value="Background Eligibility Check" \${u.status === 'Background Eligibility Check'?'selected':''}>Background Eligibility Check</option>
-                                <option value="Registry Profile Approved" \${u.status === 'Registry Profile Approved'?'selected':''}>Registry Profile Approved</option>
-                                <option value="Refusal Issued" \${u.status === 'Refusal Issued'?'selected':''}>Refusal Issued</option>
+                            <select id="s-\${u._id}" \${!u.uciNumber ? 'disabled' : ''}>
+                                <option value="Under Active Officer Review" \${u.status.includes('Review')?'selected':''}>Under Active Officer Review</option>
+                                <option value="Biometrics Verification Stage" \${u.status.includes('Biometrics')?'selected':''}>Biometrics Verification Stage</option>
+                                <option value="Background Eligibility Check" \${u.status.includes('Background')?'selected':''}>Background Eligibility Check</option>
+                                <option value="Registry Profile Approved" \${u.status.includes('Approved')?'selected':''}>Registry Profile Approved</option>
+                                <option value="Refusal Issued" \${u.status.includes('Refusal')?'selected':''}>Refusal Issued</option>
                             </select>
+                            <div style="font-size:10px; color:#666; margin-top:3px;">\${!u.uciNumber ? '⚠️ Issue UCI first to open stream states' : ''}</div>
                         </td>
                         <td>
-                            <textarea id="n-\${u._id}" rows="4" placeholder="Enter official notes visible to applicant...">\${u.adminNotes || ''}</textarea>
+                            <textarea id="n-\${u._id}" rows="3" placeholder="Enter processing adjustments...">\${u.adminNotes || ''}</textarea>
                         </td>
                         <td>
-                            <button class="save-btn" onclick="save('\${u._id}')">Commit</button>
-                            <button class="del-btn" onclick="del('\${u._id}')">Purge File</button>
+                            \${uciActionColumnHtml}
+                            <button class="save-btn" onclick="save('\${u._id}')" style="margin-top:5px;">Commit</button>
+                            <button class="del-btn" onclick="del('\${u._id}')">Purge</button>
                         </td>
                     \`;
                     tbody.appendChild(tr);
                 });
             }
 
-            // Document Lightbox Inspector Mechanism
-            function viewFile(base64, mime, filename) {
-                const modal = document.getElementById('fileModal');
-                const title = document.getElementById('modalTitle');
-                const body = document.getElementById('modalBody');
-                title.innerText = "Reviewing Document: " + filename;
-                
-                if (mime.includes('image')) {
-                    body.innerHTML = \`<img src="data:\${mime};base64,\${base64}" style="max-width:100%; border:1px solid #ccc; box-shadow:0 2px 8px rgba(0,0,0,0.15);">\`;
-                } else if (mime.includes('pdf')) {
-                    body.innerHTML = \`<iframe src="data:\${mime};base64,\${base64}" style="width:100%; height:500px; border:none;"></iframe>\`;
-                } else {
-                    body.innerHTML = \`<p style="padding:20px; background:#f5f5f5;">Binary data file string formatted. Preview unsupported for this MIME. Click the download button to review manually.</p>\`;
-                }
-                modal.style.display = 'flex';
+            async function generateUCI(id) {
+                if(!confirm("Issue unique identification numbers for this user profile? This will log a simulated corporate email stream dispatcher directive to client contact parameters.")) return;
+                const res = await fetch('/api/admin/generate-uci', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ id })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    alert('🎉 Success! Dispatched Official Registration Notice ID Vector:\\nUCI Code: ' + data.uciNumber + '\\nCheck your Render logs to view the simulated outgoing email stream transmission structure.');
+                    loadGrid();
+                } else { alert('UCI Assignment Failure: ' + data.error); }
             }
 
-            function closeModal() { document.getElementById('fileModal').style.display = 'none'; }
-
             async function save(id) {
-                const status = document.getElementById('s-'+id).value;
+                const selectEl = document.getElementById('s-'+id);
+                const status = selectEl ? selectEl.value : "Submitted / Review Pending";
                 const adminNotes = document.getElementById('n-'+id).value;
                 const res = await fetch('/api/admin/decision', {
                     method: 'POST',
@@ -333,13 +356,13 @@ app.get('/admin', (req, res) => {
                     body: JSON.stringify({ id, status, adminNotes })
                 });
                 if(res.ok) {
-                    alert('🎉 Success: Decision vectors and notes committed to database cluster securely.');
+                    alert('Adjudication changes saved.');
                     loadGrid();
-                } else { alert('Adjudication pipeline error.'); }
+                } else { alert('Adjudication system updating fault.'); }
             }
 
             async function del(id) {
-                if(confirm('🚨 WARNING: Purge application record permanently from data registry? This cannot be undone.')) {
+                if(confirm('Purge profile entry permanently?')) {
                     await fetch('/api/admin/user/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
                     loadGrid();
                 }
@@ -366,7 +389,6 @@ app.get('*', (req, res) => {
             body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background-color: #ffffff; color: #333333; margin: 0; padding: 0; font-size: 16px; line-height: 1.4375; }
             .top-utility { background-color: #26374a; padding: 8px 40px; display: flex; justify-content: flex-end; }
             .top-utility a { color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 600; }
-            .top-utility a:hover { text-decoration: underline; }
             .gov-brand-bar { padding: 25px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e1e4e7; background: #ffffff; }
             .signature-logo { font-size: 26px; font-weight: bold; color: #000000; letter-spacing: -1px; }
             .signature-logo span { color: #c8102e; font-weight: 800; }
@@ -402,8 +424,6 @@ app.get('*', (req, res) => {
             .footer-links { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
             .footer-column h4 { font-size: 16px; font-weight: 700; border-bottom: 1px solid #3f566e; padding-bottom: 8px; margin-top: 0; color: #ffffff; }
             .footer-column ul { list-style: none; padding: 0; margin: 0; }
-            .footer-column ul li { margin-bottom: 10px; }
-            .footer-column ul li a { color: #ffffff; text-decoration: none; }
             .footer-sub-strip { max-width: 1140px; margin: 30px auto 0 auto; padding-top: 20px; border-top: 1px solid #3f566e; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #ccd5df; }
         </style>
     </head>
@@ -418,12 +438,12 @@ app.get('*', (req, res) => {
         
         <div class="main-content">
             <h1>Immigration and Secure Client Portal Terminal</h1>
-            <p class="lead-text">Access your personal security enrollment profile, transmit legal digital document payload attachments, and safely monitor deployment evaluation updates in real-time.</p>
+            <p class="lead-text">Submit your profile data structure, attach dynamic identity documents, and track application processing updates using the official UCI dispatched to your contact email.</p>
             
             <div class="wet-tabs">
                 <button type="button" id="btn-login" class="active" onclick="setView('loginPanel', 'btn-login')">Access Existing Account</button>
-                <button type="button" id="btn-register" onclick="setView('registerPanel', 'btn-register')">Create Secure Account Profiling File</button>
-                <button type="button" id="btn-track" onclick="setView('trackPanel', 'btn-track')">Track File Status</button>
+                <button type="button" id="btn-register" onclick="setView('registerPanel', 'btn-register')">Submit Secure Profiling Intake File</button>
+                <button type="button" id="btn-track" onclick="setView('trackPanel', 'btn-track')">Track File Status Gateway</button>
             </div>
 
             <div id="loginPanel" class="portal-panel active">
@@ -444,7 +464,8 @@ app.get('*', (req, res) => {
             </div>
 
             <div id="registerPanel" class="portal-panel">
-                <h2>Secure System Enrollment Registry Profile</h2>
+                <h2>Secure System Intake Enrollment Registry</h2>
+                <p style="margin-top:-10px; color:#666; font-size:14px; margin-bottom:20px;">Complete this form to log your raw identity parameters. A Case Officer will evaluate your uploaded passport to issue your tracking UCI code via email.</p>
                 <form id="rForm" enctype="multipart/form-data">
                     <h3>Personal Identification Parameters Matrix</h3>
                     <div class="form-grid">
@@ -502,19 +523,20 @@ app.get('*', (req, res) => {
                         </div>
                     </div>
 
-                    <button type="submit" class="btn-primary">Execute Processing Enrollment Registry</button>
+                    <button type="submit" class="btn-primary">Submit Ingestion Intake File</button>
                 </form>
             </div>
 
             <div id="trackPanel" class="portal-panel">
-                <h2>File Status Tracking Archive Gateway</h2>
+                <h2>File Status Tracking Gateway</h2>
+                <p style="margin-top:-10px; color:#666; font-size:14px; margin-bottom:20px;">Input the official Unique Client ID (UCI) sent to your registered communication email address by the adjudication office.</p>
                 <form id="tForm">
                     <div style="max-width:440px;">
                         <div class="input-group" style="margin-bottom:20px;">
-                            <label>Unique Client ID (UCI)</label>
-                            <input type="text" id="tUci" placeholder="UCI-XXXXXXXX" required>
+                            <label>Official Unique Client ID (UCI)</label>
+                            <input type="text" id="tUci" placeholder="UCI-XXXXXXXX" required style="font-weight:bold; letter-spacing:0.5px;">
                         </div>
-                        <button type="submit" class="btn-primary">Query Directory Archives</button>
+                        <button type="submit" class="btn-primary">Query Active Registry Directory</button>
                     </div>
                 </form>
                 <div id="tResult" class="status-display-card"></div>
@@ -582,12 +604,12 @@ app.get('*', (req, res) => {
                     const res = await fetch('/api/auth/register', { method: 'POST', body: formData });
                     const data = await res.json();
                     if(res.ok && data.success) {
-                        alert('🎉 Profile File and Attachments Logged Successfully!\\n\\nUCI: ' + data.uciNumber + '\\nRef Code: ' + data.trackingRef);
+                        alert('🎉 Profile Intake Logged Successfully!\\n\\nYour profile metrics have been placed in line. A Case Officer will review your attached passport data file to issue your unique tracking UCI directly via email.');
                         document.getElementById('rForm').reset();
-                        setView('loginPanel', 'btn-login');
-                    } else { alert('Registration Exception: ' + data.error); }
+                        setView('trackPanel', 'btn-track');
+                    } else { alert('Registration Intake Exception: ' + data.error); }
                 } catch(err) { alert('Failed to route upload tracking packet.'); }
-                finally { btn.innerText = "Execute Processing Enrollment Registry"; btn.disabled = false; }
+                finally { btn.innerText = "Submit Ingestion Intake File"; btn.disabled = false; }
             });
 
             document.getElementById('lForm').addEventListener('submit', async (e) => {
@@ -606,10 +628,10 @@ app.get('*', (req, res) => {
                         localStorage.setItem('adminToken', data.token);
                         localStorage.setItem('userRole', data.role);
                         if(data.role === 'admin') {
-                            alert('🔑 Administrative Authorization Confirmed. Routing to Verification Console Grid...');
+                            alert('🔑 Administrative Authorization Confirmed. Routing to Adjudication Dashboard Console...');
                             window.location.href = '/admin';
                         } else {
-                            alert('Identity Access Granted!\\n\\nHolder profile: ' + data.name + '\\nUCI: ' + data.uciNumber + '\\nRef Key: ' + data.trackingRef);
+                            alert('Access Approved! Your profile is currently awaiting officer evaluation to issue your official UCI tracking parameters.');
                         }
                     } else { alert('Access Refused: ' + data.error); }
                 } catch(err) { alert('Authentication connection error.'); }
@@ -627,7 +649,7 @@ app.get('*', (req, res) => {
                     const out = document.getElementById('tResult');
                     if(res.ok) {
                         out.style.display = 'block';
-                        out.innerHTML = '<h3 style="color:#bc1c1c; margin-top:0; border:none; padding:0;">File Identity Verified: ' + data.name + '</h3><p style="font-size:16px; margin:12px 0;"><strong>Active File Status Stream:</strong> <span style="color:#bc1c1c; font-weight:bold;">' + data.status + '</span></p><p style="color:#444; font-size:15px; background:#ffffff; padding:12px; border:1px solid #dcdcdc; line-height:1.5;"><strong>Official Case Officer Remarks:</strong> ' + data.adminNotes + '</p>';
+                        out.innerHTML = '<h3 style="color:#bc1c1c; margin-top:0; border:none; padding:0;">File Registry Identity Verified: ' + data.name + '</h3><p style="font-size:16px; margin:12px 0;"><strong>Active Processing Stream Status:</strong> <span style="color:#bc1c1c; font-weight:bold;">' + data.status + '</span></p><p style="color:#444; font-size:15px; background:#ffffff; padding:12px; border:1px solid #dcdcdc; line-height:1.5;"><strong>Official Case Officer Remarks:</strong> ' + data.adminNotes + '</p>';
                     } else { alert('Tracking Search Handle Not Found: ' + data.error); }
                 } catch(err) { alert('Could not synchronize query stream.'); }
             });
