@@ -1,45 +1,29 @@
+// Automatically detects your live Render domain link dynamically
 const API_BASE = window.location.origin + '/api';
 
-console.log("🚀 Secure Portal Engine Active. Endpoint Target:", API_BASE);
+console.log("🚀 Secure Portal Engine Active. Target API Base:", API_BASE);
 
-// --- 1. VISUAL NAVIGATION CLICK HANDLERS ---
-// This guarantees your top buttons switch between panels cleanly without freezing
+// --- VISUAL PANEL NAVIGATION ---
 window.showPanel = function(panelId) {
-    console.log("Switching to panel view:", panelId);
-    
-    // Hide all panels safely
     const panels = ['loginPanel', 'registerPanel', 'trackPanel'];
     panels.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
     });
-
-    // Display the targeted panel
     const target = document.getElementById(panelId);
-    if (target) {
-        target.style.display = 'block';
-    } else {
-        console.error(`Panel ID "${panelId}" missing from HTML structure.`);
-    }
+    if (target) target.style.display = 'block';
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize view state: Show login page first, hide others
     if (document.getElementById('loginPanel')) window.showPanel('loginPanel');
 
-    // --- 2. AUTHENTICATION LOCK: USER/ADMIN SIGN-IN ---
+    // --- GATEWAY ACTION: ACCOUNT SIGN-IN ---
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            const emailInput = document.getElementById('loginEmail') || loginForm.querySelector('input[type="email"]');
-            const passwordInput = document.getElementById('loginPassword') || loginForm.querySelector('input[type="password"]');
-            
-            if (!emailInput || !passwordInput) {
-                alert("Form input nodes could not be resolved.");
-                return;
-            }
+            const emailInput = document.getElementById('loginEmail');
+            const passwordInput = document.getElementById('loginPassword');
 
             try {
                 const res = await fetch(`${API_BASE}/auth/login`, {
@@ -57,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         alert('🔑 Administrative Authorization Confirmed. Accessing Console...');
                         window.location.href = '/admin';
                     } else {
-                        alert(`Verification Successful.\nWelcome back, ${data.name}.\n\nYour Record Info:\nUCI: ${data.uciNumber}\nRef: ${data.trackingRef}`);
+                        alert(`Verification Successful!\nWelcome back, ${data.name}.\n\nUCI: ${data.uciNumber}\nTracking Ref: ${data.trackingRef}`);
                     }
                 } else {
                     alert(`Access Refused: ${data.error || 'Invalid credentials'}`);
@@ -68,77 +52,69 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- 3. DATA PERSISTENCE: CLIENT ENROLLMENT REGISTRY ---
+    // --- GATEWAY ACTION: CLIENT ACCOUNT REGISTRATION ---
     const registerForm = document.getElementById('registerForm');
     if (registerForm) {
         registerForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const btn = registerForm.querySelector('button') || registerForm.querySelector('input[type="submit"]');
-            
-            if (btn) {
-                btn.innerText = "Transmitting Security Packet...";
-                btn.disabled = true;
-            }
+            const btn = registerForm.querySelector('button');
+            btn.innerText = "Processing System Registration...";
+            btn.disabled = true;
+
+            // Collect text inputs safely
+            const name = registerForm.querySelector('input[name="name"]').value;
+            const email = registerForm.querySelector('input[name="email"]').value;
+            const password = registerForm.querySelector('input[name="password"]').value;
 
             try {
                 const res = await fetch(`${API_BASE}/auth/register`, {
                     method: 'POST',
-                    body: new FormData(registerForm)
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, password })
                 });
                 const data = await res.json();
 
                 if (res.ok && data.success) {
                     alert(`🎉 Security Registry Profile Form Created!\n\nSave these tracking numbers:\nUCI File ID: ${data.uciNumber}\nTracking Key: ${data.trackingRef}`);
                     registerForm.reset();
-                    window.showPanel('loginPanel'); // Bounce back to login automatically
+                    window.showPanel('loginPanel');
                 } else {
                     alert(`Registry Exception: ${data.error}`);
                 }
             } catch (err) {
                 alert('Connection loop interface failure.');
             } finally {
-                if (btn) {
-                    btn.innerText = "Execute Processing Enrollment Registry";
-                    btn.disabled = false;
-                }
+                btn.innerText = "Execute Processing Enrollment Registry";
+                btn.disabled = false;
             }
         });
     }
 
-    // --- 4. DATA FETCHING: USER STATUS QUERY GATEWAY ---
+    // --- GATEWAY ACTION: USER STATUS QUERY ---
     const trackForm = document.getElementById('trackForm');
     if (trackForm) {
         trackForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const uciInput = document.getElementById('uciInput') || trackForm.querySelector('input[type="text"]');
+            const uciInput = document.getElementById('uciInput').value.trim();
             const output = document.getElementById('trackingResult');
-
-            if (!uciInput || !uciInput.value) {
-                alert("Please input a valid UCI identifier.");
-                return;
-            }
 
             try {
                 const res = await fetch(`${API_BASE}/auth/track`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uciNumber: uciInput.value.trim() })
+                    body: JSON.stringify({ uciNumber: uciInput })
                 });
                 const data = await res.json();
 
                 if (res.ok) {
-                    if (output) {
-                        output.style.display = 'block';
-                        output.innerHTML = `
-                            <div style="background:#f4f6f9; padding:15px; border-left:5px solid #c8102e; margin-top:15px; border-radius: 4px; text-align:left;">
-                                <h4 style="margin:0 0 10px 0; color:#111;">File Holder: ${data.name}</h4>
-                                <p style="margin:5px 0;"><strong>Processing Status:</strong> <span style="color:#c8102e; font-weight:bold;">${data.status}</span></p>
-                                <p style="margin:5px 0; color:#555;"><strong>Officer Notes:</strong> ${data.adminNotes}</p>
-                            </div>
-                        `;
-                    } else {
-                        alert(`Profile Match: ${data.name}\nStatus: ${data.status}\nNotes: ${data.adminNotes}`);
-                    }
+                    output.style.display = 'block';
+                    output.innerHTML = `
+                        <div style="background:#f4f6f9; padding:15px; border-left:5px solid #c8102e; margin-top:15px;">
+                            <h4>File Holder: ${data.name}</h4>
+                            <p><strong>Processing Status:</strong> <span style="color:#c8102e; font-weight:bold;">${data.status}</span></p>
+                            <p><strong>Officer Notes:</strong> ${data.adminNotes}</p>
+                        </div>
+                    `;
                 } else {
                     alert(`Query Fault: ${data.error}`);
                 }
