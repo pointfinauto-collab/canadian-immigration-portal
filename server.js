@@ -14,10 +14,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, '.'))); // Set to root directory lookup
+
+// Point directly to the 'public' sub-folder for all static assets
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 2. MONGODB ATLAS CLUSTER CONNECTION WITH CRASH PROTECTION
-// If process.env.MONGO_URI is missing, it falls back to a temporary testing database string
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
@@ -25,7 +26,6 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('🚀 Database Node Connected Successfully'))
   .catch(err => {
       console.error('❌ Database Initialization Warning:', err.message);
-      // Removed process.exit(1) so Render is forced to stay online no matter what!
   });
 
 // 3. PERSISTENT DATA SCHEMAS
@@ -41,7 +41,6 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Avoid compiling compilation errors if model already compiled
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
 // 4. MULTIPART FILE UPLOAD MIDDLEWARE
@@ -67,7 +66,7 @@ const authenticateToken = (req, res, next) => {
 const requireRole = (role) => {
     return (req, res, next) => {
         if (!req.user || req.user.role !== role) {
-            return res.status(403).json({ error: 'Privilege escalation block: Unauthorized role access.' });
+            return res.status(403).json({ error: 'Unauthorized role access.' });
         }
         next();
     };
@@ -80,9 +79,8 @@ const requireRole = (role) => {
 app.post('/api/auth/register', upload.any(), async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        
         if (!name || !email || !password) {
-            return res.status(400).json({ error: 'All primary identity fields are required.' });
+            return res.status(400).json({ error: 'All fields are required.' });
         }
 
         const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
@@ -111,7 +109,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
         await newUser.save();
         res.status(201).json({ success: true, uciNumber, trackingRef });
     } catch (error) {
-        console.error('System Register Error:', error);
         res.status(500).json({ error: 'Internal pipeline fault compiling registration record.' });
     }
 });
@@ -119,13 +116,13 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ error: 'Missing account login fields.' });
+        if (!email || !password) return res.status(400).json({ error: 'Missing login fields.' });
 
         const user = await User.findOne({ email: email.trim().toLowerCase() });
-        if (!user) return res.status(401).json({ error: 'Authentication challenge failed: Mismatched credentials.' });
+        if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
 
         const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) return res.status(401).json({ error: 'Authentication challenge failed: Mismatched credentials.' });
+        if (!validPassword) return res.status(401).json({ error: 'Invalid credentials.' });
 
         const token = jwt.sign(
             { id: user._id, role: user.role, name: user.name },
@@ -149,10 +146,10 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/track', async (req, res) => {
     try {
         const { uciNumber } = req.body;
-        if (!uciNumber) return res.status(400).json({ error: 'UCI lookup handle missing.' });
+        if (!uciNumber) return res.status(400).json({ error: 'UCI handle missing.' });
 
         const record = await User.findOne({ uciNumber: uciNumber.trim() });
-        if (!record) return res.status(404).json({ error: 'No matching records in active directory.' });
+        if (!record) return res.status(404).json({ error: 'No matching records found.' });
 
         res.json({
             name: record.name,
@@ -160,7 +157,7 @@ app.post('/api/auth/track', async (req, res) => {
             adminNotes: record.adminNotes
         });
     } catch (error) {
-        res.status(500).json({ error: 'Query loop terminal fault.' });
+        res.status(500).json({ error: 'Query loop failure.' });
     }
 });
 
@@ -180,8 +177,7 @@ app.get('/api/admin/enrollments', authenticateToken, requireRole('admin'), async
 app.post('/api/admin/decision', authenticateToken, requireRole('admin'), async (req, res) => {
     try {
         const { id, status, adminNotes } = req.body;
-        const updatedFile = await User.findByIdAndUpdate(id, { status, adminNotes }, { new: true });
-        if (!updatedFile) return res.status(404).json({ error: 'Target registry item missing.' });
+        await User.findByIdAndUpdate(id, { status, adminNotes });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Data write loop crash.' });
@@ -197,13 +193,13 @@ app.delete('/api/admin/user/:id', authenticateToken, requireRole('admin'), async
     }
 });
 
-// 8. INTERFACE PATH TRANSLATIONS
+// 8. ACCURATE PATH ROUTING TO THE PUBLIC SUBFOLDER
 app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'admin.html'));
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
