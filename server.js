@@ -4,32 +4,54 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
-// GLOBAL SYSTEMS PIPELINE MIDDLEWARES
+// ==========================================
+// 1. GLOBAL PIPELINE MIDDLEWARES
+// ==========================================
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '150mb' })); 
-app.use(express.urlencoded({ limit: '150mb', extended: true }));
+app.use(express.json({ limit: '20mb' })); 
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
-// MULTIPART PACKET ROUTER
-const storage = multer.memoryStorage();
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB per individual file asset ceiling
+// Ensure a safe temporary folder exists on the server disk for file spooling
+const uploadDir = path.join(__dirname, 'tmp_payloads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// ==========================================
+// 2. DISK-STREAM MULTIPART CONFIGURATION
+// ==========================================
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
 });
 
-// DATABASE ENGINE CONNECTION WITH GRIDFS CHUNK STREAMS
-const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
-const MONGO_URI = process.env.MONGO_URI || fallbackURI;
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB ceiling per individual file asset
+});
+
+// ==========================================
+// 3. DATABASE ENGINE & GRIDFS CONNECTION
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 
 let bucket;
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('🚀 Database Node Connected Successfully');
-      // Set up the chunk storage layout configuration 
+      // Initialize the GridFS bucket driver directly inside the connected database
       bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
           bucketName: 'visa_payload_chunks'
       });
@@ -37,7 +59,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('❌ Database Sync Warning:', err.message));
 
 // ==========================================
-// OPTIMIZED PROFILE & METADATA SCHEMAS
+// 4. DATA SCHEMAS
 // ==========================================
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -50,7 +72,7 @@ const UserSchema = new mongoose.Schema({
     uciNumber: { type: String, default: null }, 
     trackingRef: { type: String, default: null },
     status: { type: String, default: 'Awaiting Document Review (UCI Pending)' },
-    adminNotes: { type: String, default: 'Your application package is logged. A case officer is validating your dynamic travel registry stack.' },
+    adminNotes: { type: String, default: 'Your application package is logged. A case officer is validating your documentation stack.' },
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -68,20 +90,29 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 const Document = mongoose.models.Document || mongoose.model('Document', DocumentSchema);
 
 // ==========================================
-// BACKEND ROUTING ENDPOINTS
+// 5. SECURE REGISTRATION & STREAMING PIPELINE
 // ==========================================
-
 app.post('/api/auth/register', upload.any(), async (req, res) => {
+    // Fail-safe: Ensure the database streaming layer is ready before accepting files
+    if (!bucket) {
+        if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+        return res.status(503).json({ error: 'Database subsystem is initializing. Please resubmit in 5 seconds.' });
+    }
+
     try {
         const { name, email, password, dob, citizenship, passportNumber, docTypes } = req.body;
         
         if (!name || !email || !password) {
+            if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
             return res.status(400).json({ error: 'Primary registration attributes missing.' });
         }
 
         const cleanEmail = email.toLowerCase().trim();
         const existingUser = await User.findOne({ email: cleanEmail });
-        if (existingUser) return res.status(409).json({ error: 'This email account is already registered.' });
+        if (existingUser) {
+            if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+            return res.status(409).json({ error: 'This email account is already registered.' });
+        }
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -107,37 +138,54 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                 'experience': 'Employment Reference & Experience Letters'
             };
 
-            // Process uploads cleanly via asynchronous streams
+            // Process files sequentially using streams to avoid connection drop faults
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const specificType = typesArray[i] || 'supporting';
 
-                const uploadStream = bucket.openUploadStream(file.originalname, {
-                    contentType: file.mimetype
-                });
-                
-                uploadStream.write(file.buffer);
-                uploadStream.end();
+                await new Promise((resolve, reject) => {
+                    const uploadStream = bucket.openUploadStream(file.originalname, {
+                        contentType: file.mimetype
+                    });
 
-                const newDoc = new Document({
-                    userId: savedUser._id,
-                    gridFileId: uploadStream.id, 
-                    docType: specificType,
-                    docLabel: labelMap[specificType] || 'Supporting Documentation',
-                    fileName: file.originalname,
-                    mimeType: file.mimetype
+                    // Pipe the file straight from disk into the database stream pipeline
+                    fs.createReadStream(file.path)
+                        .pipe(uploadStream)
+                        .on('error', (err) => reject(err))
+                        .on('finish', async () => {
+                            try {
+                                const newDoc = new Document({
+                                    userId: savedUser._id,
+                                    gridFileId: uploadStream.id, 
+                                    docType: specificType,
+                                    docLabel: labelMap[specificType] || 'Supporting Documentation',
+                                    fileName: file.originalname,
+                                    mimeType: file.mimetype
+                                });
+                                await newDoc.save();
+                                
+                                // Safely erase the temporary file from the server disk
+                                if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+                                resolve();
+                            } catch (e) {
+                                reject(e);
+                            }
+                        });
                 });
-                await newDoc.save();
             }
         }
 
-        res.status(201).json({ success: true, message: 'Application package processed cleanly.' });
+        res.status(201).json({ success: true, message: 'Application package compiled successfully.' });
     } catch (error) {
-        console.error('STREAM FAULT:', error);
-        res.status(500).json({ error: 'Internal storage transaction fault.' });
+        console.error('CRITICAL TRANSACTION FAULT:', error);
+        if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+        res.status(500).json({ error: 'Internal storage transaction fault. The upload bundle size is too large for the current database tier.' });
     }
 });
 
+// ==========================================
+// 6. CORE APP AUTHENTICATION & OPERATIONS
+// ==========================================
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -185,24 +233,20 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard." }); }
 });
 
-// CORRECTED STREAM INTERCEPTOR CONFIGURATION
 app.get('/api/admin/document/:gridFileId', checkAdmin, async (req, res) => {
     try {
+        if (!bucket) return res.status(503).send("Database streaming node detached.");
         const fileId = new mongoose.Types.ObjectId(req.params.gridFileId);
         res.setHeader('Content-Type', 'application/octet-stream');
+        
         const downloadStream = bucket.openDownloadStream(fileId);
-        
-        downloadStream.on('error', () => {
-            return res.status(444).send("Target stream asset lost.");
-        });
-        
+        downloadStream.on('error', () => res.status(444).send("Target stream asset lost."));
         downloadStream.pipe(res);
     } catch (err) {
         res.status(500).send("Stream mapping error.");
     }
 });
 
-// FIXED TYPO IN THE RESOLUTION OBJECT CONTEXT
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
@@ -233,8 +277,8 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
         const docs = await Document.find({ userId: req.params.id });
         for(let doc of docs) {
             try {
-                await bucket.delete(doc.gridFileId);
-            } catch(e) { /* Ignore if already deleted */ }
+                if (bucket) await bucket.delete(doc.gridFileId);
+            } catch(e) {}
         }
         await Document.deleteMany({ userId: req.params.id });
         await User.findByIdAndDelete(req.params.id);
@@ -243,7 +287,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// SYSTEM VIEW CHANNELS (ADMIN INTERFACE)
+// 7. USER AND ADMINISTRATIVE INTERFACES
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -308,9 +352,9 @@ app.get('/admin', (req, res) => {
                                 <div style="margin-bottom:6px; background:#f8fafc; padding:6px; border:1px solid #cbd5e1; border-left:3px solid #2572b4; border-radius:3px;">
                                     <strong style="font-size:12px; color:#1e293b;">\${doc.docLabel}</strong><br>
                                     <span style="font-size:11px; color:#64748b; word-break:break-all;">File: \${doc.fileName}</span>
-                                    <button class="file-btn" style="width:100%; border:none; cursor:pointer;" onclick="downloadStreamFile('\${doc.gridFileId}', '\${doc.fileName}')">💾 Download File</button>
+                                    <button class="file-btn" style="width:100%; border:none; cursor:pointer;" onclick="downloadStreamFile('\strid', '\${doc.fileName}')">💾 Download File</button>
                                 </div>
-                            \`;
+                            \`.replace('\\strid', doc.gridFileId);
                         });
                     } else { filesHtml = '<span style="color:#999; font-style:italic;">No files attached</span>'; }
 
@@ -554,7 +598,7 @@ app.get('*', (req, res) => {
                             let width = img.width;
                             let height = img.height;
                             
-                            if (width > 1600) { height *= 1600 / width; width = 1600; }
+                            if (width > 1200) { height *= 1200 / width; width = 1200; }
                             canvas.width = width;
                             canvas.height = height;
                             
@@ -564,7 +608,7 @@ app.get('*', (req, res) => {
                             canvas.toBlob(function (blob) {
                                 const compressedFile = new File([blob], rawFile.name, { type: 'image/jpeg', lastModified: Date.now() });
                                 pushToMasterQueue(selector.value, selector.options[selector.selectedIndex].text, compressedFile);
-                            }, 'image/jpeg', 0.75); 
+                            }, 'image/jpeg', 0.65); 
                         };
                     };
                 } else {
@@ -598,8 +642,9 @@ app.get('*', (req, res) => {
                 uploadedAssetsQueue.forEach(item => {
                     const div = document.createElement('div');
                     div.className = 'queue-item';
-                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name} (\${(item.fileObject.size / 1024 / 1024).toFixed(2)} MB)</small></div>
-                                      <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>\`;
+                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name} (\text_mb MB)</small></div>
+                                      <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>\`
+                                      .replace('\text_mb', (item.fileObject.size / 1024 / 1024).toFixed(2));
                     container.appendChild(div);
                 });
             }
