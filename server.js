@@ -11,14 +11,14 @@ const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
 // GLOBAL SYSTEMS PIPELINE MIDDLEWARES
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '100mb' })); 
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(express.json({ limit: '150mb' })); 
+app.use(express.urlencoded({ limit: '150mb', extended: true }));
 
-// MULTIPART PACKET ROUTER (ALLOWS LARGE TRANSFERS)
+// MULTIPART PACKET ROUTER WITH STREAM ALLOCATION
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 15 * 1024 * 1024 } // Safe 15MB individual file upload limit
+    limits: { fileSize: 15 * 1024 * 1024 } // Safe 15MB individual asset cap
 });
 
 // DATABASE ENGINE CONNECTION
@@ -30,10 +30,8 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('❌ Database Sync Warning:', err.message));
 
 // ==========================================
-// NEW DOUBLE-COLLECTION SCHEMATIC BLUEPRINTS
+// DOUBLE-COLLECTION SCHEMATIC BLUEPRINTS
 // ==========================================
-
-// 1. Light Profile Blueprint (Will NEVER hit the 16MB limit)
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
@@ -49,14 +47,13 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// 2. Separate Document Blueprint (Gives EACH file its own 16MB capacity limit)
 const DocumentSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     docType: { type: String, required: true },
     docLabel: { type: String, required: true },
     fileName: { type: String, required: true },
     mimeType: { type: String, required: true },
-    fileData: { type: String, required: true }, // Base64 Text Payload isolated here safely
+    fileData: { type: String, required: true }, 
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -67,7 +64,6 @@ const Document = mongoose.models.Document || mongoose.model('Document', Document
 // RELIABLE ENDPOINT TRANSACTIONS
 // ==========================================
 
-// BULLETPROOF REGISTRATION PIPELINE
 app.post('/api/auth/register', upload.any(), async (req, res) => {
     try {
         const { name, email, password, dob, citizenship, passportNumber, docTypes } = req.body;
@@ -80,22 +76,18 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
         const existingUser = await User.findOne({ email: cleanEmail });
         if (existingUser) return res.status(409).json({ error: 'This email account is already registered.' });
 
-        // Hash Passwords securely
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Assign Role clearance levels dynamically
         const systemAdminEmail = (process.env.SYSTEM_ADMIN_EMAIL || 'admin@portal.com').toLowerCase().trim();
         const role = (cleanEmail === systemAdminEmail) ? 'admin' : 'user';
 
-        // STEP 1: Save the user profile first to get a valid database _id
         const newUser = new User({
             name, email: cleanEmail, password: hashedPassword,
             dob, citizenship, passportNumber, role
         });
         const savedUser = await newUser.save();
 
-        // STEP 2: Save each file separately in the Documents Collection linked to this User
         if (req.files && req.files.length > 0) {
             const typesArray = Array.isArray(docTypes) ? docTypes : [docTypes];
             
@@ -108,7 +100,6 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                 'experience': 'Employment Reference & Experience Letters'
             };
 
-            // Loop through each file and commit it as its own independent database record
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const specificType = typesArray[i] || 'supporting';
@@ -125,14 +116,13 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
             }
         }
 
-        res.status(201).json({ success: true, message: 'Comprehensive application file saved cleanly across collections.' });
+        res.status(201).json({ success: true, message: 'Comprehensive application file saved cleanly.' });
     } catch (error) {
         console.error('CRITICAL PIPELINE FAULT:', error);
-        res.status(500).json({ error: 'Internal database transaction storage failure. Check binary string capacities.' });
+        res.status(500).json({ error: 'Internal storage cap exceeded. Please try re-saving this document with a smaller file size.' });
     }
 });
 
-// AUTH GATES
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -147,7 +137,6 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Login verification fault.' }); }
 });
 
-// CLIENT TRACKING CONTROLLER
 app.post('/api/auth/track', async (req, res) => {
     try {
         const record = await User.findOne({ uciNumber: req.body.uciNumber.trim() });
@@ -156,7 +145,6 @@ app.post('/api/auth/track', async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Tracking database lookup fault.' }); }
 });
 
-// SECURE ADMINISTRATIVE ROUTING LAYER
 const checkAdmin = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -168,33 +156,24 @@ const checkAdmin = (req, res, next) => {
     });
 };
 
-// REVISED ADMIN CONSOLE PIPELINE GETTER: Joins the profile and documents smoothly
 app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
     try {
-        // Query users and perform a lookup query to find their matching files entries
         const users = await User.find().sort({ createdAt: -1 }).lean();
         const fullPackages = [];
-
         for(let user of users) {
             if(user.role === 'admin') continue;
-            // Fetch separate documents attached to this user
-            const associatedDocs = await Document.find({ userId: user._id }).select('-fileData').lean(); 
             const fullDocs = await Document.find({ userId: user._id }).lean(); 
-            
-            user.documents = fullDocs; // Attaches documents array back for frontend view compilation
+            user.documents = fullDocs;
             fullPackages.push(user);
         }
         res.json(fullPackages);
-    } catch (err) {
-        res.status(500).json({ error: "Failed to assemble administration grid packets." });
-    }
+    } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard." }); }
 });
 
-// GENERATE VALID UCI
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
-        if(!user) return res.status(404).json({ error: 'User profile record missing.' });
+        if(!user) return res.status(404).json({ error: 'User missing.' });
 
         const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
         const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
@@ -202,14 +181,13 @@ app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
         user.uciNumber = uciNumber;
         user.trackingRef = trackingRef;
         user.status = "Under Active Officer Review (UCI Dispatched)";
-        user.adminNotes = `File registry parameters compiled successfully. Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct status dashboard query handles are open.`;
+        user.adminNotes = `Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct tracking updates are open.`;
         
         await user.save();
         res.json({ success: true, uciNumber, trackingRef });
     } catch (err) { res.status(500).json({ error: 'Failed to assign tracking codes.' }); }
 });
 
-// PROCESS ADJUDICATION DECISIONS
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
     try {
         await User.findByIdAndUpdate(req.body.id, { status: req.body.status, adminNotes: req.body.adminNotes });
@@ -222,11 +200,11 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
         await Document.deleteMany({ userId: req.params.id });
         await User.findByIdAndDelete(req.params.id);
         res.json({ success: true });
-    } catch(err) { res.status(500).json({ error: "Purge process execution failure." }); }
+    } catch(err) { res.status(500).json({ error: "Purge process failure." }); }
 });
 
 // ==========================================
-// RENDER HTML PATHWAYS (SAME AS BEFORE)
+// RENDER VIEWS (WITH AUTOMATIC PRE-FLIGHT COMPRESSION ENGINE)
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -298,9 +276,10 @@ app.get('/admin', (req, res) => {
                     } else { filesHtml = '<span style="color:#999; font-style:italic;">No files attached</span>'; }
 
                     let uciActionColumnHtml = !u.uciNumber 
-                        ? \`<button class="uci-btn" onclick="generateUCI('\${u._id}')">🎟️ Issue UCI ID</button>\`
+                        ? \`<button class="uci-btn" onclick="generateUCI('\strid')">🎟️ Issue UCI ID</button>\`
                         : \`<span style="color:#264a28; font-weight:bold; font-size:11px; display:block; text-align:center; margin-bottom:5px;">✅ UCI Active</span>\`;
 
+                    const tr = document.createElement('tr');
                     tr.innerHTML = \`
                         <td><strong>\${u.name}</strong><br><small><code>\${u.email}</code><br>DOB: \${u.dob}</small></td>
                         <td>\${filesHtml}</td>
@@ -318,7 +297,7 @@ app.get('/admin', (req, res) => {
                         </td>
                         <td><textarea id="n-\${u._id}" rows="4">\${u.adminNotes || ''}</textarea></td>
                         <td>
-                            \${uciActionColumnHtml}
+                            \${uciActionColumnHtml.replace('\\strid', u._id)}
                             <button class="save-btn" onclick="save('\${u._id}')">Commit</button>
                         </td>
                     \`;
@@ -502,18 +481,54 @@ app.get('*', (req, res) => {
                 document.getElementById(btnId).classList.add('active');
             }
 
+            // FRONTEND COMPRESSION PRE-FLIGHT LOOP ENGINE
             function addAssetToQueue() {
                 const selector = document.getElementById('docTypeSelector');
                 const fileInput = document.getElementById('fileSelector');
                 if(fileInput.files.length === 0) { alert('Please choose a file first.'); return; }
                 
+                const rawFile = fileInput.files[0];
+                
+                // If it is an image file type, pass it through the auto-compression canvas scaling system
+                if (rawFile.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(rawFile);
+                    reader.onload = function (event) {
+                        const img = new Image();
+                        img.src = event.target.result;
+                        img.onload = function () {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            
+                            // Max dimension scale cap
+                            if (width > 1600) { height *= 1600 / width; width = 1600; }
+                            canvas.width = width;
+                            canvas.height = height;
+                            
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            
+                            canvas.toBlob(function (blob) {
+                                const compressedFile = new File([blob], rawFile.name, { type: 'image/jpeg', lastModified: Date.now() });
+                                pushToMasterQueue(selector.value, selector.options[selector.selectedIndex].text, compressedFile);
+                            }, 'image/jpeg', 0.70); // High fidelity 70% scale compression block
+                        };
+                    };
+                } else {
+                    // Standard PDF/Docs bypass compression directly
+                    pushToMasterQueue(selector.value, selector.options[selector.selectedIndex].text, rawFile);
+                }
+                fileInput.value = '';
+            }
+
+            function pushToMasterQueue(type, label, fileObj) {
                 uploadedAssetsQueue.push({
                     id: Date.now() + Math.random().toString(36).substr(2, 5),
-                    type: selector.value,
-                    label: selector.options[selector.selectedIndex].text,
-                    fileObject: fileInput.files[0]
+                    type: type,
+                    label: label,
+                    fileObject: fileObj
                 });
-                fileInput.value = '';
                 renderVisualQueue();
             }
 
@@ -532,7 +547,7 @@ app.get('*', (req, res) => {
                 uploadedAssetsQueue.forEach(item => {
                     const div = document.createElement('div');
                     div.className = 'queue-item';
-                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name}</small></div>
+                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name} (\${(item.fileObject.size / 1024 / 1024).toFixed(2)} MB)</small></div>
                                       <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>\`;
                     container.appendChild(div);
                 });
@@ -543,7 +558,7 @@ app.get('*', (req, res) => {
                 if(uploadedAssetsQueue.length === 0) { alert('Please stack at least one file using (+).'); return; }
 
                 const btn = e.target.querySelector('.btn-primary');
-                btn.innerText = "Transmitting Travel Package Arrays...";
+                btn.innerText = "Transmitting Optimised Travel Package...";
                 btn.disabled = true;
 
                 const formData = new FormData();
