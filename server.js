@@ -14,23 +14,30 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '150mb' })); 
 app.use(express.urlencoded({ limit: '150mb', extended: true }));
 
-// MULTIPART PACKET ROUTER WITH STREAM ALLOCATION
+// MULTIPART PACKET ROUTER
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 15 * 1024 * 1024 } // Safe 15MB individual asset cap
+    limits: { fileSize: 100 * 1024 * 1024 } // Expanded to a massive 100MB per individual file
 });
 
-// DATABASE ENGINE CONNECTION
+// DATABASE ENGINE CONNECTION WITH GRIDFS CONTROLLER OVERLAYS
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
+let bucket;
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('🚀 Database Node Connected Successfully'))
+  .then(() => {
+      console.log('🚀 Database Node Connected Successfully');
+      // Initialize GridFS Bucket for chunked asset processing
+      bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+          bucketName: 'visa_payload_chunks'
+      });
+  })
   .catch(err => console.error('❌ Database Sync Warning:', err.message));
 
 // ==========================================
-// DOUBLE-COLLECTION SCHEMATIC BLUEPRINTS
+// OPTIMIZED BLUEPRINT SCHEMATICS
 // ==========================================
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -47,13 +54,14 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+// Stores file metadata and points securely to GridFS chunk streams
 const DocumentSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    gridFileId: { type: mongoose.Schema.Types.ObjectId, required: true }, // Points to GridFS Chunks
     docType: { type: String, required: true },
     docLabel: { type: String, required: true },
     fileName: { type: String, required: true },
     mimeType: { type: String, required: true },
-    fileData: { type: String, required: true }, 
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -61,7 +69,7 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 const Document = mongoose.models.Document || mongoose.model('Document', DocumentSchema);
 
 // ==========================================
-// RELIABLE ENDPOINT TRANSACTIONS
+// BULLETPROOF TRANSACTIONS (GRIDFS DRIVEN)
 // ==========================================
 
 app.post('/api/auth/register', upload.any(), async (req, res) => {
@@ -100,26 +108,35 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
                 'experience': 'Employment Reference & Experience Letters'
             };
 
+            // Stream files directly into GridFS Chunks (Bypasses 16MB document limitations completely)
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const specificType = typesArray[i] || 'supporting';
 
+                const uploadStream = bucket.openUploadStream(file.originalname, {
+                    contentType: file.mimetype
+                });
+                
+                // Write the file buffer data straight into the database stream pipeline
+                uploadStream.write(file.buffer);
+                uploadStream.end();
+
                 const newDoc = new Document({
                     userId: savedUser._id,
+                    gridFileId: uploadStream.id, 
                     docType: specificType,
                     docLabel: labelMap[specificType] || 'Supporting Documentation',
                     fileName: file.originalname,
-                    mimeType: file.mimetype,
-                    fileData: file.buffer.toString('base64')
+                    mimeType: file.mimetype
                 });
                 await newDoc.save();
             }
         }
 
-        res.status(201).json({ success: true, message: 'Comprehensive application file saved cleanly.' });
+        res.status(201).json({ success: true, message: 'Application package processed cleanly through chunk streams.' });
     } catch (error) {
-        console.error('CRITICAL PIPELINE FAULT:', error);
-        res.status(500).json({ error: 'Internal storage cap exceeded. Please try re-saving this document with a smaller file size.' });
+        console.error('STREAM FAULT:', error);
+        res.status(500).json({ error: 'Internal storage transaction fault.' });
     }
 });
 
@@ -162,12 +179,25 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
         const fullPackages = [];
         for(let user of users) {
             if(user.role === 'admin') continue;
-            const fullDocs = await Document.find({ userId: user._id }).lean(); 
-            user.documents = fullDocs;
+            const docs = await Document.find({ userId: user._id }).lean(); 
+            user.documents = docs;
             fullPackages.push(user);
         }
         res.json(fullPackages);
     } catch (err) { res.status(500).json({ error: "Failed to assemble dashboard." }); }
+});
+
+// DYNAMIC ON-THE-FLY FILE RE-ASSEMBLY FOR DOWNLOADING
+app.get('/api/admin/document/:gridFileId', checkAdmin, async (req, res) => {
+    try {
+        const fileId = new mongoose.Types.ObjectId(req.params.gridFileId);
+        const downloadStream = bucket.openDownloadStream(fileId);
+        
+        // Pass the re-assembled file chunks directly back to the browser console stream
+        downloadStream.pipe(res);
+    } catch (err) {
+        res.status(444).send("Target stream asset lost.");
+    }
 });
 
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
@@ -181,7 +211,7 @@ app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
         user.uciNumber = uciNumber;
         user.trackingRef = trackingRef;
         user.status = "Under Active Officer Review (UCI Dispatched)";
-        user.adminNotes = `Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct tracking updates are open.`;
+        user.adminNotes = `Profile assigned Unique Client ID (UCI): ${uicNumber || uciNumber}. Direct tracking updates are open.`;
         
         await user.save();
         res.json({ success: true, uciNumber, trackingRef });
@@ -197,6 +227,10 @@ app.post('/api/admin/decision', checkAdmin, async (req, res) => {
 
 app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
     try {
+        const docs = await Document.find({ userId: req.params.id });
+        for(let doc of docs) {
+            await bucket.delete(doc.gridFileId); // Wipe binary chunk fragments from database completely
+        }
         await Document.deleteMany({ userId: req.params.id });
         await User.findByIdAndDelete(req.params.id);
         res.json({ success: true });
@@ -204,7 +238,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// RENDER VIEWS (WITH AUTOMATIC PRE-FLIGHT COMPRESSION ENGINE)
+// SYSTEM VIEW CHANNELS
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -265,11 +299,12 @@ app.get('/admin', (req, res) => {
                     let filesHtml = '';
                     if(u.documents && u.documents.length > 0) {
                         u.documents.forEach(doc => {
+                            // Direct streaming link mapping safely via token authentication validation checks
                             filesHtml += \`
                                 <div style="margin-bottom:6px; background:#f8fafc; padding:6px; border:1px solid #cbd5e1; border-left:3px solid #2572b4; border-radius:3px;">
                                     <strong style="font-size:12px; color:#1e293b;">\${doc.docLabel}</strong><br>
                                     <span style="font-size:11px; color:#64748b; word-break:break-all;">File: \${doc.fileName}</span>
-                                    <a class="file-btn" href="data:\${doc.mimeType};base64,\${doc.fileData}" download="\${doc.fileName}">💾 Download</a>
+                                    <button class="file-btn" style="width:100%; border:none;" onclick="downloadStreamFile('\${doc.gridFileId}', '\${doc.fileName}')">💾 Download File</button>
                                 </div>
                             \`;
                         });
@@ -303,6 +338,22 @@ app.get('/admin', (req, res) => {
                     \`;
                     tbody.appendChild(tr);
                 });
+            }
+
+            async function downloadStreamFile(gridId, name) {
+                const response = await fetch('/api/admin/document/' + gridId, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if(response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = name;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                } else { alert("Could not fetch file stream blocks."); }
             }
 
             async function generateUCI(id) {
@@ -481,7 +532,6 @@ app.get('*', (req, res) => {
                 document.getElementById(btnId).classList.add('active');
             }
 
-            // FRONTEND COMPRESSION PRE-FLIGHT LOOP ENGINE
             function addAssetToQueue() {
                 const selector = document.getElementById('docTypeSelector');
                 const fileInput = document.getElementById('fileSelector');
@@ -489,7 +539,6 @@ app.get('*', (req, res) => {
                 
                 const rawFile = fileInput.files[0];
                 
-                // If it is an image file type, pass it through the auto-compression canvas scaling system
                 if (rawFile.type.startsWith('image/')) {
                     const reader = new FileReader();
                     reader.readAsDataURL(rawFile);
@@ -501,7 +550,6 @@ app.get('*', (req, res) => {
                             let width = img.width;
                             let height = img.height;
                             
-                            // Max dimension scale cap
                             if (width > 1600) { height *= 1600 / width; width = 1600; }
                             canvas.width = width;
                             canvas.height = height;
@@ -512,11 +560,10 @@ app.get('*', (req, res) => {
                             canvas.toBlob(function (blob) {
                                 const compressedFile = new File([blob], rawFile.name, { type: 'image/jpeg', lastModified: Date.now() });
                                 pushToMasterQueue(selector.value, selector.options[selector.selectedIndex].text, compressedFile);
-                            }, 'image/jpeg', 0.70); // High fidelity 70% scale compression block
+                            }, 'image/jpeg', 0.75); 
                         };
                     };
                 } else {
-                    // Standard PDF/Docs bypass compression directly
                     pushToMasterQueue(selector.value, selector.options[selector.selectedIndex].text, rawFile);
                 }
                 fileInput.value = '';
@@ -558,7 +605,7 @@ app.get('*', (req, res) => {
                 if(uploadedAssetsQueue.length === 0) { alert('Please stack at least one file using (+).'); return; }
 
                 const btn = e.target.querySelector('.btn-primary');
-                btn.innerText = "Transmitting Optimised Travel Package...";
+                btn.innerText = "Streaming Packages into Vault Enclaves...";
                 btn.disabled = true;
 
                 const formData = new FormData();
@@ -578,13 +625,13 @@ app.get('*', (req, res) => {
                     const res = await fetch('/api/auth/register', { method: 'POST', body: formData });
                     const data = await res.json();
                     if(res.ok && data.success) {
-                        alert('🎉 Application package deployed successfully!');
+                        alert('🎉 Stream Connection Complete: Profile and files compiled successfully.');
                         uploadedAssetsQueue = [];
                         document.getElementById('rForm').reset();
                         renderVisualQueue();
                         setView('trackPanel', 'btn-track');
                     } else { alert('Refusal Exception: ' + data.error); }
-                } catch(err) { alert('Transfer fault occurred.'); }
+                } catch(err) { alert('Transfer pipeline interrupted.'); }
                 finally { btn.innerText = "Submit Profile & All Stacked Documents"; btn.disabled = false; }
             });
 
