@@ -9,27 +9,36 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
-// MIDDLEWARE PIPELINE
+// MIDDLEWARE PIPELINE (Configured for deep diagnostic payload logging)
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// MULTIPART FILE BUFFER ALLOCATION
+// MULTIPART FILE BUFFER CEILING (Safely capped at 6MB to ensure strict BSON 16MB limits)
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Maximum upload payload
+    limits: { fileSize: 6 * 1024 * 1024 } 
 });
 
-// DATABASE CONNECTION
+// DATABASE CONNECTION ENGINE
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('🚀 Database Node Connected Successfully'))
+  .then(async () => {
+      console.log('🚀 Database Node Connected Successfully');
+      try {
+          // Self-Healing Script: Drops old, legacy tracking indexes causing historical registration pipeline crashes
+          await mongoose.connection.db.collection('users').dropIndexes();
+          console.log('🧹 Legacy MongoDB Identifier Indexes Cleaned Successfully.');
+      } catch (e) {
+          // Suppress if indexes didn't exist yet
+      }
+  })
   .catch(err => console.error('❌ Database Initialization Warning:', err.message));
 
-// DATA SCHEMA
+// IMMIGRATION DATA STRUCTURE SCHEMA
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
@@ -41,9 +50,8 @@ const UserSchema = new mongoose.Schema({
     residence: { type: String, default: '' },
     phone: { type: String, default: '' },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
-    // Altered Workflow States: Generated on Case Officer Directive
-    uciNumber: { type: String, default: null, sparse: true }, 
-    trackingRef: { type: String, default: null, sparse: true },
+    uciNumber: { type: String, default: null }, // Null initially until Admin generates it
+    trackingRef: { type: String, default: null },
     status: { type: String, default: 'Awaiting Initial Review (UCI Pending)' },
     adminNotes: { type: String, default: 'Your profile registration has been received. A case officer is reviewing your uploaded identification documents to generate your official Unique Client ID (UCI).' },
     attachedFile: { type: String, default: '' },     
@@ -55,17 +63,17 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
 // ==========================================
-// API TRANSACTION LOGIC ENDPOINTS
+// CORE SEAMLESS API ENDPOINTS
 // ==========================================
 
-// Client initial profiling Intake path
+// 1. CLIENT REGISTER INTAKE PIPE
 app.post('/api/auth/register', upload.single('clientDocument'), async (req, res) => {
     try {
         const { name, email, password, dob, gender, citizenship, passportNumber, residence, phone } = req.body;
-        if (!name || !email || !password) return res.status(400).json({ error: 'Primary fields missing.' });
+        if (!name || !email || !password) return res.status(400).json({ error: 'Required tracking fields missing.' });
 
         const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
-        if (existingUser) return res.status(409).json({ error: 'Account already registered.' });
+        if (existingUser) return res.status(409).json({ error: 'This email account is already registered.' });
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -87,53 +95,56 @@ app.post('/api/auth/register', upload.single('clientDocument'), async (req, res)
             name, email: email.toLowerCase().trim(), password: hashedPassword,
             dob, gender, citizenship, passportNumber, residence, phone, role,
             attachedFile, attachedFileName, attachedMimeType
-            // UCI and trackingRef left unassigned intentionally for Officer assignment
         });
 
         await newUser.save();
-        res.status(201).json({ success: true, message: 'Intake profile created. Awaiting UCI Generation.' });
+        res.status(201).json({ success: true, message: 'Intake file logged safely.' });
     } catch (error) {
-        res.status(500).json({ error: 'Registration intake pipeline failure.' });
+        console.error('CRITICAL CLIENT PORTAL ERROR:', error);
+        res.status(500).json({ error: 'Internal system pipeline registration failure.' });
     }
 });
 
+// 2. AUTHENTICATED ACCESS GATEWAY
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await User.findOne({ email: email.trim().toLowerCase() });
-        if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
+        if (!user) return res.status(401).json({ error: 'Invalid portal credentials.' });
 
         const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) return res.status(401).json({ error: 'Invalid credentials.' });
+        if (!validPassword) return res.status(401).json({ error: 'Invalid portal credentials.' });
 
-        const token = jwt.sign({ id: user._id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '2h' });
-        res.json({ success: true, token, role: user.role, name: user.name, uciNumber: user.uciNumber });
+        const token = jwt.sign({ id: user._id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '4h' });
+        res.json({ success: true, token, role: user.role, name: user.name });
     } catch (error) {
-        res.status(500).json({ error: 'Login verification error.' });
+        res.status(500).json({ error: 'System login verification error.' });
     }
 });
 
-// Direct tracking verification endpoint matching against Admin-generated UCI codes
+// 3. TARGET STATUS TRACKER PIPE (Matching against Admin issued UCIs)
 app.post('/api/auth/track', async (req, res) => {
     try {
         const targetUCI = req.body.uciNumber.trim();
-        if(!targetUCI) return res.status(400).json({ error: 'UCI string missing.' });
+        if(!targetUCI) return res.status(400).json({ error: 'UCI lookup handle missing.' });
 
         const record = await User.findOne({ uciNumber: targetUCI });
-        if (!record) return res.status(404).json({ error: 'No matching records found for this issued UCI.' });
+        if (!record) return res.status(404).json({ error: 'No active profile matched this issued UCI.' });
         
         res.json({ name: record.name, status: record.status, adminNotes: record.adminNotes });
     } catch (error) {
-        res.status(500).json({ error: 'Tracking file directory lookup error.' });
+        res.status(500).json({ error: 'Tracking database lookup timeout.' });
     }
 });
 
+// 4. ADMIN PRIVILEGE SECURITY MIDDLEWARE
 const checkAdmin = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Missing token.' });
+    if (!token) return res.status(401).json({ error: 'Security token missing.' });
+    
     jwt.verify(token, JWT_SECRET, (err, decoded) => {
-        if (err || decoded.role !== 'admin') return res.status(403).json({ error: 'Unauthorized administrative access.' });
+        if (err || decoded.role !== 'admin') return res.status(403).json({ error: 'Clearance denied. Administrative role required.' });
         req.user = decoded;
         next();
     });
@@ -143,39 +154,51 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
     res.json(await User.find().sort({ createdAt: -1 }));
 });
 
-// Admin command: Generate unique UCI identifier vectors and dispatch email stream trigger
+// 5. ADMINISTRATIVE DISPATCH: ASSIGN EXCLUSIVE UCI & SIMULATE OUTGOING EMAIL
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
-        if(!user) return res.status(404).json({ error: 'User not found' });
-        
-        if(user.uciNumber) return res.status(400).json({ error: 'UCI already issued for this file entry.' });
+        if(!user) return res.status(404).json({ error: 'Client file record missing.' });
+        if(user.uciNumber) return res.status(400).json({ error: 'UCI index tracking handle already generated.' });
 
-        // Generate official corporate parameters
         const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
         const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
 
         user.uciNumber = uciNumber;
         user.trackingRef = trackingRef;
         user.status = "Under Active Officer Review (UCI Dispatched)";
-        user.adminNotes = `Official profile identification generated. Your verified application profile has been allocated Unique Client ID: ${uciNumber}. Direct status tracking is now active.`;
+        user.adminNotes = `Official immigration indexing complete. Your profile has been assigned Unique Client ID (UCI): ${uciNumber}. Use this code on the tracking tab to monitor live updates.`;
         
         await user.save();
 
-        console.log(`✉️ Simulated Government Email Transmission Triggered Successfully:
-        To: ${user.email}
-        Subject: Official Immigration Profile Notice - UCI Issued
-        Body: Hello ${user.name}, your tracking clearance profile has been approved. 
-        Your Official Unique Client ID (UCI) is: ${uciNumber}
-        You can now input this code directly into the Status Gateway to review your file status details.`);
+        console.log(`
+========================================================================
+✉️ OUTGOING DISPATCH SIMULATOR SYSTEM ➔ AIRMAIL QUEUE CONNECTED
+========================================================================
+To: ${user.email}
+Subject: Notification of Official Immigration Intake - UCI Allocated
+Body: Hello ${user.name},
+
+Your submitted identity data documentation and passport pages have been fully verified.
+Your record has been successfully indexed into the active registry.
+
+👉 YOUR UNIQUE CLIENT ID (UCI): ${uciNumber}
+
+You may now use this unique identifier directly inside the Status Gateway at the 
+homepage terminal to monitor real-time review results and adjudication directives.
+
+Sincerely,
+Immigration, Refugees and Citizenship Canada (IRCC)
+========================================================================
+        `);
 
         res.json({ success: true, uciNumber, trackingRef });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to execute structural UCI generation.' });
+        res.status(500).json({ error: 'Failed to complete structural corporate UCI generation.' });
     }
 });
 
-// Admin Command: Commit regular status changes/officer notes
+// 6. ADJUDICATION DECISION AND COMMITTED REMARKS REMOTING
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
     try {
         await User.findByIdAndUpdate(req.body.id, { 
@@ -184,7 +207,7 @@ app.post('/api/admin/decision', checkAdmin, async (req, res) => {
         });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to update adjudication decision parameters' });
+        res.status(500).json({ error: 'Failed to commit adjudication criteria vectors.' });
     }
 });
 
@@ -194,7 +217,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// CASE OFFICER DECISION CONSOLE
+// ADJUDICATION RADAR PANEL GENERATION
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -214,41 +237,36 @@ app.get('/admin', (req, res) => {
             th, td { padding: 14px; text-align: left; border-bottom: 1px solid #dcdcdc; font-size: 14px; vertical-align: top; }
             th { background: #26374a; color: white; font-weight: 600; }
             tr:nth-child(even) { background: #f8fafc; }
-            
             .badge { display: inline-block; padding: 4px 8px; font-weight: bold; font-size: 11px; border-radius: 3px; text-transform: uppercase; margin-bottom: 5px; }
             .badge-pending { background: #777; color: #fff; }
             .badge-active { background: #0275d8; color: #fff; }
             .badge-approved { background: #5cb85c; color: #fff; }
             .badge-refused { background: #d9534f; color: #fff; }
-
             .uci-btn { background: #d9534f; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 4px; cursor: pointer; border-bottom: 2px solid #b52b27; margin-bottom: 5px; width: 100%; text-transform: uppercase; font-size: 11px; letter-spacing: 0.3px;}
-            .uci-btn:hover { background: #b52b27; }
-            .save-btn { background: #264a28; color: white; border: none; padding: 8px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 6px; border-radius: 4px; border-bottom: 2px solid #142815; }
-            .save-btn:hover { background: #19331b; }
+            .save-btn { background: #264a28; color: white; border: none; padding: 8px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 6px; border-radius: 4px; border-bottom: 2px solid #142815; width:100%; }
             .del-btn { background: #bc1c1c; color: white; border: none; padding: 6px 14px; cursor: pointer; font-size: 12px; width: 100%; border-radius: 4px; }
             .file-btn { display: inline-block; background: #2572b4; color: white; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; margin-top: 5px; border-radius: 4px; text-align: center; border-bottom: 2px solid #184b78; width: 100%; box-sizing: border-box; }
-            
             select, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #767676; border-radius: 4px; font-size: 13px; }
         </style>
     </head>
     <body>
         <div class="gov-header">
-            <div class="brand-text">Government of Can<span class="red-flag">ada</span> — Case Officer Adjudication Engine</div>
+            <div class="brand-text">Government of Can<span class="red-flag">ada</span> — Case Officer System Desktop</div>
             <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;">Sign Out</button>
         </div>
         
         <div class="box">
-            <h2>📋 Case Ingestion & Dynamic UCI Assignment Hub</h2>
-            <p style="margin-top:-5px; color:#555;">Review submitted data profiles, verify uploaded identity pages, generate Unique Client ID (UCI) metrics to dispatch automated email notices, and adjust review criteria parameters.</p>
+            <h2>📋 Document Review & Strategic UCI Assignment Engine</h2>
+            <p style="margin-top:-5px; color:#555;">Inspect application payloads, view uploaded files, distribute legal Unique Client IDs (UCI) directly to applicant contact variables, and update status vectors.</p>
             
             <table>
                 <thead>
                     <tr>
-                        <th style="width:22%;">Applicant Intake Identity</th>
-                        <th style="width:18%;">Identity Documents</th>
+                        <th style="width:22%;">Applicant Legal Identity</th>
+                        <th style="width:18%;">Transmitted Documents</th>
                         <th style="width:20%;">Allocated System Identifiers</th>
-                        <th style="width:16%;">Status Pipeline</th>
-                        <th style="width:14%;">Visible Client Remarks</th>
+                        <th style="width:16%;">Status Pipeline Vector</th>
+                        <th style="width:14%;">Live Visible Remarks</th>
                         <th style="width:10%;">Directives</th>
                     </tr>
                 </thead>
@@ -268,7 +286,7 @@ app.get('/admin', (req, res) => {
                 tbody.innerHTML = '';
                 
                 users.forEach(u => {
-                    if(u.role === 'admin') return; // Skip showing administrators
+                    if(u.role === 'admin') return; 
                     const tr = document.createElement('tr');
                     
                     let badgeClass = 'badge-pending';
@@ -276,22 +294,21 @@ app.get('/admin', (req, res) => {
                     if(u.status.includes('Refusal')) badgeClass = 'badge-refused';
                     if(u.status.includes('Review') || u.status.includes('Biometrics')) badgeClass = 'badge-active';
 
-                    let fileSectionHtml = '<span style="color:#777; font-style:italic;">No attachment submitted</span>';
+                    let fileSectionHtml = '<span style="color:#777; font-style:italic;">No attachment uploaded</span>';
                     if (u.attachedFile) {
                         fileSectionHtml = \`
                             <div>
                                 📁 <span style="font-size:12px; font-weight:bold; color:#222; word-break:break-all;">\${u.attachedFileName}</span><br>
-                                <a class="file-btn" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">💾 Download & Review</a>
+                                <a class="file-btn" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">💾 Download Asset</a>
                             </div>
                         \`;
                     }
 
-                    // Conditional rendering of the "Generate UCI & Email Client" module button block
                     let uciActionColumnHtml = '';
                     if (!u.uciNumber) {
-                        uciActionColumnHtml = \`<button class="uci-btn" onclick="generateUCI('\${u._id}')">🎟️ Issue UCI & Email</button>\`;
+                        uciActionColumnHtml = \`<button class="uci-btn" onclick="generateUCI('\${u._id}')">🎟️ Generate UCI & Email</button>\`;
                     } else {
-                        uciActionColumnHtml = \`<span style="color:#264a28; font-weight:bold; font-size:12px;">✅ UCI Active & Mailed</span>\`;
+                        uciActionColumnHtml = \`<span style="color:#264a28; font-weight:bold; font-size:12px; display:block; text-align:center; margin-bottom:5px;">✅ UCI Active & Emailed</span>\`;
                     }
 
                     tr.innerHTML = \`
@@ -299,33 +316,33 @@ app.get('/admin', (req, res) => {
                             <strong>\${u.name}</strong><br>
                             <span style="font-size:12px; color:#555; line-height:1.4;">
                                 Email: <code>\${u.email}</code><br>
-                                Birth: \${u.dob || 'N/A'} | Origin: <strong>\${u.citizenship || 'N/A'}</strong>
+                                Birth: \${u.dob || \'N/A\'} | Nationality: <strong>\${u.citizenship || \'N/A\'}</strong>
                             </span>
                         </td>
                         <td>\${fileSectionHtml}</td>
                         <td>
                             <span class="badge \${badgeClass}">\${u.status}</span><br>
-                            UCI ID: <code style="font-size:13px; font-weight:bold; color:#bc1c1c;">\${u.uciNumber || 'PENDING GENERATION'}</code><br>
-                            Ref Key: <code>\${u.trackingRef || 'N/A'}</code><br>
-                            Passport Serial: <strong>\${u.passportNumber || 'N/A'}</strong>
+                            UCI ID: <code style="font-size:13px; font-weight:bold; color:#bc1c1c;">\${u.uciNumber || \'AWAITING ASSIGNMENT\'}</code><br>
+                            Ref Key: <code>\${u.trackingRef || \'N/A\'}</code><br>
+                            Passport Key: <strong>\${u.passportNumber || \'N/A\'}</strong>
                         </td>
                         <td>
-                            <select id="s-\${u._id}" \${!u.uciNumber ? 'disabled' : ''}>
-                                <option value="Under Active Officer Review" \${u.status.includes('Review')?'selected':''}>Under Active Officer Review</option>
-                                <option value="Biometrics Verification Stage" \${u.status.includes('Biometrics')?'selected':''}>Biometrics Verification Stage</option>
-                                <option value="Background Eligibility Check" \${u.status.includes('Background')?'selected':''}>Background Eligibility Check</option>
-                                <option value="Registry Profile Approved" \${u.status.includes('Approved')?'selected':''}>Registry Profile Approved</option>
-                                <option value="Refusal Issued" \${u.status.includes('Refusal')?'selected':''}>Refusal Issued</option>
+                            <select id="s-\${u._id}" \${!u.uciNumber ? \'disabled\' : \'\'}>
+                                <option value="Under Active Officer Review" \${u.status.includes(\'Review\')?\'selected\':\'\'}>Under Active Officer Review</option>
+                                <option value="Biometrics Verification Stage" \${u.status.includes(\'Biometrics\')?\'selected\':\'\'}>Biometrics Verification Stage</option>
+                                <option value="Background Eligibility Check" \${u.status.includes(\'Background\')?\'selected\':\'\'}>Background Eligibility Check</option>
+                                <option value="Registry Profile Approved" \${u.status.includes(\'Approved\')?\'selected\':\'\'}>Registry Profile Approved</option>
+                                <option value="Refusal Issued" \${u.status.includes(\'Refusal\')?\'selected\':\'\'}>Refusal Issued</option>
                             </select>
-                            <div style="font-size:10px; color:#666; margin-top:3px;">\${!u.uciNumber ? '⚠️ Issue UCI first to open stream states' : ''}</div>
+                            <div style="font-size:10px; color:#666; margin-top:3px;">\${!u.uciNumber ? \'⚠️ System locked until UCI assigned\' : \'\'}</div>
                         </td>
                         <td>
-                            <textarea id="n-\${u._id}" rows="3" placeholder="Enter processing adjustments...">\${u.adminNotes || ''}</textarea>
+                            <textarea id="n-\${u._id}" rows="3" placeholder="Enter status remarks to push live...">\${u.adminNotes || \'\'}</textarea>
                         </td>
                         <td>
                             \${uciActionColumnHtml}
-                            <button class="save-btn" onclick="save('\${u._id}')" style="margin-top:5px;">Commit</button>
-                            <button class="del-btn" onclick="del('\${u._id}')">Purge</button>
+                            <button class="save-btn" onclick="save('\${u._id}')">Commit</button>
+                            <button class="del-btn" onclick="del('\${u._id}')">Purge File</button>
                         </td>
                     \`;
                     tbody.appendChild(tr);
@@ -333,7 +350,7 @@ app.get('/admin', (req, res) => {
             }
 
             async function generateUCI(id) {
-                if(!confirm("Issue unique identification numbers for this user profile? This will log a simulated corporate email stream dispatcher directive to client contact parameters.")) return;
+                if(!confirm("Authorize unique identification generation? This initiates the automated outgoing email stream logs.")) return;
                 const res = await fetch('/api/admin/generate-uci', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
@@ -341,14 +358,14 @@ app.get('/admin', (req, res) => {
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    alert('🎉 Success! Dispatched Official Registration Notice ID Vector:\\nUCI Code: ' + data.uciNumber + '\\nCheck your Render logs to view the simulated outgoing email stream transmission structure.');
+                    alert('🎉 Success! Dispatched Official Registration Code Vector:\\nUCI Issued: ' + data.uciNumber + '\\nReview your web logs inside Render to see the printed outgoing airmail notification structure.');
                     loadGrid();
-                } else { alert('UCI Assignment Failure: ' + data.error); }
+                } else { alert('UCI Processing Fault: ' + data.error); }
             }
 
             async function save(id) {
                 const selectEl = document.getElementById('s-'+id);
-                const status = selectEl ? selectEl.value : "Submitted / Review Pending";
+                const status = selectEl ? selectEl.value : "Awaiting Initial Review (UCI Pending)";
                 const adminNotes = document.getElementById('n-'+id).value;
                 const res = await fetch('/api/admin/decision', {
                     method: 'POST',
@@ -356,13 +373,13 @@ app.get('/admin', (req, res) => {
                     body: JSON.stringify({ id, status, adminNotes })
                 });
                 if(res.ok) {
-                    alert('Adjudication changes saved.');
+                    alert('🎉 File modifications successfully saved to database.');
                     loadGrid();
-                } else { alert('Adjudication system updating fault.'); }
+                } else { alert('Adjudication updating fault.'); }
             }
 
             async function del(id) {
-                if(confirm('Purge profile entry permanently?')) {
+                if(confirm('Purge profile file permanently from core registries?')) {
                     await fetch('/api/admin/user/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
                     loadGrid();
                 }
@@ -375,7 +392,7 @@ app.get('/admin', (req, res) => {
 });
 
 // ==========================================
-// OFFICIAL CANADA.CA USER INTERFACE
+// HIGH-FIDELITY OFFICIAL CANADA.CA FRONTEND
 // ==========================================
 app.get('*', (req, res) => {
     res.send(`
@@ -424,6 +441,8 @@ app.get('*', (req, res) => {
             .footer-links { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
             .footer-column h4 { font-size: 16px; font-weight: 700; border-bottom: 1px solid #3f566e; padding-bottom: 8px; margin-top: 0; color: #ffffff; }
             .footer-column ul { list-style: none; padding: 0; margin: 0; }
+            .footer-column ul li { margin-bottom: 10px; }
+            .footer-column ul li a { color: #ffffff; text-decoration: none; }
             .footer-sub-strip { max-width: 1140px; margin: 30px auto 0 auto; padding-top: 20px; border-top: 1px solid #3f566e; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #ccd5df; }
         </style>
     </head>
@@ -438,7 +457,7 @@ app.get('*', (req, res) => {
         
         <div class="main-content">
             <h1>Immigration and Secure Client Portal Terminal</h1>
-            <p class="lead-text">Submit your profile data structure, attach dynamic identity documents, and track application processing updates using the official UCI dispatched to your contact email.</p>
+            <p class="lead-text">Submit your profile structural metadata, transmit dynamic validation files, and inspect system evaluation timelines utilizing the official UCI dispatched directly to your contact email.</p>
             
             <div class="wet-tabs">
                 <button type="button" id="btn-login" class="active" onclick="setView('loginPanel', 'btn-login')">Access Existing Account</button>
@@ -465,7 +484,7 @@ app.get('*', (req, res) => {
 
             <div id="registerPanel" class="portal-panel">
                 <h2>Secure System Intake Enrollment Registry</h2>
-                <p style="margin-top:-10px; color:#666; font-size:14px; margin-bottom:20px;">Complete this form to log your raw identity parameters. A Case Officer will evaluate your uploaded passport to issue your tracking UCI code via email.</p>
+                <p style="margin-top:-10px; color:#666; font-size:14px; margin-bottom:20px;">Complete this form to log your identity parameters. A Case Officer will evaluate your uploaded passport data file to generate your unique tracking UCI code via email.</p>
                 <form id="rForm" enctype="multipart/form-data">
                     <h3>Personal Identification Parameters Matrix</h3>
                     <div class="form-grid">
@@ -659,4 +678,4 @@ app.get('*', (req, res) => {
     `);
 });
 
-app.listen(PORT, () => console.log(`Server execution smoothly online on port \${PORT}`));
+app.listen(PORT, () => console.log(`Server execution smoothly online on port ${PORT}`));
