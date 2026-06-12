@@ -9,33 +9,31 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
-// GLOBAL SYSTEM ENGINE MIDDLEWARES
+// GLOBAL SYSTEMS PIPELINE MIDDLEWARES
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '50mb' })); 
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '100mb' })); 
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// MULTIPART BUFFER FILE ENGINE
+// MULTIPART PACKET ROUTER (ALLOWS LARGE TRANSFERS)
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB safe individual asset cap
+    limits: { fileSize: 15 * 1024 * 1024 } // Safe 15MB individual file upload limit
 });
 
-// DATABASE INFRASTRUCTURE LINK
+// DATABASE ENGINE CONNECTION
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
 mongoose.connect(MONGO_URI)
-  .then(async () => {
-      console.log('🚀 Database Node Connected Successfully');
-      try {
-          await mongoose.connection.db.collection('users').dropIndexes();
-          console.log('🧹 Legacy Validation Constraints Cleaned.');
-      } catch (e) {}
-  })
-  .catch(err => console.error('❌ Database Initialization Warning:', err.message));
+  .then(() => console.log('🚀 Database Node Connected Successfully'))
+  .catch(err => console.error('❌ Database Sync Warning:', err.message));
 
-// DATA SCHEMATIC ARCHITECTURE
+// ==========================================
+// NEW DOUBLE-COLLECTION SCHEMATIC BLUEPRINTS
+// ==========================================
+
+// 1. Light Profile Blueprint (Will NEVER hit the 16MB limit)
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
@@ -47,87 +45,94 @@ const UserSchema = new mongoose.Schema({
     uciNumber: { type: String, default: null }, 
     trackingRef: { type: String, default: null },
     status: { type: String, default: 'Awaiting Document Review (UCI Pending)' },
-    adminNotes: { type: String, default: 'Your application profile package is safely logged. A case officer is validating your attached identity, financial, educational, and employment credentials.' },
-    
-    // Flexible Storage Array for All Target Canadian Visa Assets
-    documents: [{
-        docType: { type: String },       // passport, photo, payment, education, job_offer, experience
-        docLabel: { type: String },      // Readable text mapped from choices
-        fileName: { type: String },
-        mimeType: { type: String },
-        fileData: { type: String }       // Secure Hashed Base64 Text Payload
-    }],
+    adminNotes: { type: String, default: 'Your application package is logged. A case officer is validating your dynamic travel registry stack.' },
+    createdAt: { type: Date, default: Date.now }
+});
+
+// 2. Separate Document Blueprint (Gives EACH file its own 16MB capacity limit)
+const DocumentSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    docType: { type: String, required: true },
+    docLabel: { type: String, required: true },
+    fileName: { type: String, required: true },
+    mimeType: { type: String, required: true },
+    fileData: { type: String, required: true }, // Base64 Text Payload isolated here safely
     createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
+const Document = mongoose.models.Document || mongoose.model('Document', DocumentSchema);
 
 // ==========================================
-// API TRANSACTION HANDLERS
+// RELIABLE ENDPOINT TRANSACTIONS
 // ==========================================
 
-// Intake endpoint parsing multiple files from dynamic array uploads
+// BULLETPROOF REGISTRATION PIPELINE
 app.post('/api/auth/register', upload.any(), async (req, res) => {
     try {
         const { name, email, password, dob, citizenship, passportNumber, docTypes } = req.body;
         
         if (!name || !email || !password) {
-            return res.status(400).json({ error: 'Primary required fields missing.' });
+            return res.status(400).json({ error: 'Primary registration attributes missing.' });
         }
 
         const cleanEmail = email.toLowerCase().trim();
         const existingUser = await User.findOne({ email: cleanEmail });
-        if (existingUser) return res.status(409).json({ error: 'Account already registered.' });
+        if (existingUser) return res.status(409).json({ error: 'This email account is already registered.' });
 
+        // Hash Passwords securely
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
+        // Assign Role clearance levels dynamically
         const systemAdminEmail = (process.env.SYSTEM_ADMIN_EMAIL || 'admin@portal.com').toLowerCase().trim();
         const role = (cleanEmail === systemAdminEmail) ? 'admin' : 'user';
 
-        // Read dynamic uploaded files arrays and correlate types
-        const processedDocuments = [];
-        
-        // Map keys to official institutional titles
-        const labelMap = {
-            'passport': 'Passport Bio-Page Scan',
-            'photo': 'Official Passport Photograph',
-            'payment': 'Application Payment Slip',
-            'education': 'Educational Degrees / Diplomas',
-            'job_offer': 'Official Canadian Job Offer Letter',
-            'experience': 'Employment Reference & Experience Letters'
-        };
+        // STEP 1: Save the user profile first to get a valid database _id
+        const newUser = new User({
+            name, email: cleanEmail, password: hashedPassword,
+            dob, citizenship, passportNumber, role
+        });
+        const savedUser = await newUser.save();
 
+        // STEP 2: Save each file separately in the Documents Collection linked to this User
         if (req.files && req.files.length > 0) {
-            // Check if types arrived as single value or array string block
             const typesArray = Array.isArray(docTypes) ? docTypes : [docTypes];
             
-            req.files.forEach((file, index) => {
-                const specificType = typesArray[index] || 'supporting';
-                processedDocuments.push({
+            const labelMap = {
+                'passport': 'Passport Bio-Page Scan',
+                'photo': 'Official Passport Photograph',
+                'payment': 'Application Payment Slip',
+                'education': 'Educational Degrees / Certificates',
+                'job_offer': 'Official Canadian Job Offer Letter',
+                'experience': 'Employment Reference & Experience Letters'
+            };
+
+            // Loop through each file and commit it as its own independent database record
+            for (let i = 0; i < req.files.length; i++) {
+                const file = req.files[i];
+                const specificType = typesArray[i] || 'supporting';
+
+                const newDoc = new Document({
+                    userId: savedUser._id,
                     docType: specificType,
                     docLabel: labelMap[specificType] || 'Supporting Documentation',
                     fileName: file.originalname,
                     mimeType: file.mimetype,
                     fileData: file.buffer.toString('base64')
                 });
-            });
+                await newDoc.save();
+            }
         }
 
-        const newUser = new User({
-            name, email: cleanEmail, password: hashedPassword,
-            dob, citizenship, passportNumber, role,
-            documents: processedDocuments
-        });
-
-        await newUser.save();
-        res.status(201).json({ success: true, message: 'Comprehensive application file saved cleanly.' });
+        res.status(201).json({ success: true, message: 'Comprehensive application file saved cleanly across collections.' });
     } catch (error) {
         console.error('CRITICAL PIPELINE FAULT:', error);
-        res.status(500).json({ error: 'Internal system data payload storage crash.' });
+        res.status(500).json({ error: 'Internal database transaction storage failure. Check binary string capacities.' });
     }
 });
 
+// AUTH GATES
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -142,14 +147,16 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Login verification fault.' }); }
 });
 
+// CLIENT TRACKING CONTROLLER
 app.post('/api/auth/track', async (req, res) => {
     try {
         const record = await User.findOne({ uciNumber: req.body.uciNumber.trim() });
-        if (!record) return res.status(404).json({ error: 'UCI search query match zero results.' });
+        if (!record) return res.status(404).json({ error: 'UCI search query matched zero files.' });
         res.json({ name: record.name, status: record.status, adminNotes: record.adminNotes });
     } catch (error) { res.status(500).json({ error: 'Tracking database lookup fault.' }); }
 });
 
+// SECURE ADMINISTRATIVE ROUTING LAYER
 const checkAdmin = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -161,14 +168,33 @@ const checkAdmin = (req, res, next) => {
     });
 };
 
+// REVISED ADMIN CONSOLE PIPELINE GETTER: Joins the profile and documents smoothly
 app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
-    res.json(await User.find().sort({ createdAt: -1 }));
+    try {
+        // Query users and perform a lookup query to find their matching files entries
+        const users = await User.find().sort({ createdAt: -1 }).lean();
+        const fullPackages = [];
+
+        for(let user of users) {
+            if(user.role === 'admin') continue;
+            // Fetch separate documents attached to this user
+            const associatedDocs = await Document.find({ userId: user._id }).select('-fileData').lean(); 
+            const fullDocs = await Document.find({ userId: user._id }).lean(); 
+            
+            user.documents = fullDocs; // Attaches documents array back for frontend view compilation
+            fullPackages.push(user);
+        }
+        res.json(fullPackages);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to assemble administration grid packets." });
+    }
 });
 
+// GENERATE VALID UCI
 app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
     try {
         const user = await User.findById(req.body.id);
-        if(!user) return res.status(404).json({ error: 'User missing.' });
+        if(!user) return res.status(404).json({ error: 'User profile record missing.' });
 
         const uciNumber = "UCI-" + Math.floor(10000000 + Math.random() * 90000000);
         const trackingRef = "CAN-" + Math.floor(100000 + Math.random() * 900000) + "-REG";
@@ -176,13 +202,14 @@ app.post('/api/admin/generate-uci', checkAdmin, async (req, res) => {
         user.uciNumber = uciNumber;
         user.trackingRef = trackingRef;
         user.status = "Under Active Officer Review (UCI Dispatched)";
-        user.adminNotes = `File registry credentials updated. Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct status dashboard query handles are open.`;
+        user.adminNotes = `File registry parameters compiled successfully. Profile assigned Unique Client ID (UCI): ${uciNumber}. Direct status dashboard query handles are open.`;
         
         await user.save();
         res.json({ success: true, uciNumber, trackingRef });
     } catch (err) { res.status(500).json({ error: 'Failed to assign tracking codes.' }); }
 });
 
+// PROCESS ADJUDICATION DECISIONS
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
     try {
         await User.findByIdAndUpdate(req.body.id, { status: req.body.status, adminNotes: req.body.adminNotes });
@@ -191,12 +218,15 @@ app.post('/api/admin/decision', checkAdmin, async (req, res) => {
 });
 
 app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
+    try {
+        await Document.deleteMany({ userId: req.params.id });
+        await User.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ error: "Purge process execution failure." }); }
 });
 
 // ==========================================
-// ADMINISTRATIVE CONSOLE INTERFACE RENDER
+// RENDER HTML PATHWAYS (SAME AS BEFORE)
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -226,7 +256,6 @@ app.get('/admin', (req, res) => {
             <div class="brand-text">Government of Canada — Case Officer Adjudication Desktop</div>
             <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;">Sign Out</button>
         </div>
-        
         <div class="box">
             <h2>📋 Visa Documents Package Evaluation Matrix</h2>
             <table>
@@ -243,7 +272,6 @@ app.get('/admin', (req, res) => {
                 <tbody id="rows"><tr><td colspan="6" style="text-align:center;">Querying Secure Database Streams...</td></tr></tbody>
             </table>
         </div>
-
         <script>
             const token = localStorage.getItem('adminToken');
             if (!token || localStorage.getItem('userRole') !== 'admin') { window.location.href = '/'; }
@@ -256,9 +284,6 @@ app.get('/admin', (req, res) => {
                 tbody.innerHTML = '';
                 
                 users.forEach(u => {
-                    if(u.role === 'admin') return; 
-                    const tr = document.createElement('tr');
-                    
                     let filesHtml = '';
                     if(u.documents && u.documents.length > 0) {
                         u.documents.forEach(doc => {
@@ -302,12 +327,12 @@ app.get('/admin', (req, res) => {
             }
 
             async function generateUCI(id) {
-                const res = await fetch('/api/admin/generate-uci', {
+                await fetch('/api/admin/generate-uci', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify({ id })
                 });
-                if(res.ok) { alert('UCI Assigned and client notice logged.'); loadGrid(); }
+                loadGrid();
             }
 
             async function save(id) {
@@ -328,9 +353,6 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// ==========================================
-// MAIN OFFICIAL HIGH-FIDELITY FRONTEND VIEW
-// ==========================================
 app.get('*', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -359,30 +381,22 @@ app.get('*', (req, res) => {
             label { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
             .required-mark { color: #bc1c1c; }
             input, select { padding: 8px 12px; border: 1px solid #444444; font-size: 15px; border-radius: 4px; width: 100%; box-sizing: border-box; height: 40px; }
-            
-            /* Plus Sign UI Dashboard Elements */
             .uploader-framework { background: #f8fafc; border: 2px dashed #94a3b8; padding: 25px; border-radius: 6px; margin-top: 20px; }
             .controls-row { display: flex; gap: 15px; align-items: flex-end; margin-bottom: 20px; background: #fff; padding: 15px; border: 1px solid #e2e8f0; border-radius: 4px; }
             .plus-btn { width: 40px; height: 40px; background: #2572b4; color: white; border: none; font-size: 24px; font-weight: bold; cursor: pointer; border-radius: 4px; display: flex; justify-content: center; align-items: center; border-bottom: 3px solid #1b5180; }
-            .plus-btn:hover { background: #1b5180; }
-            
             .queue-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-            @media (max-width:600px) { .queue-list { grid-template-columns: 1fr; } }
             .queue-item { background: #fff; border: 1px solid #cbd5e1; padding: 12px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #2572b4; }
             .remove-file-btn { background: #dc2626; color: white; border: none; padding: 4px 8px; cursor: pointer; font-size: 11px; font-weight: bold; border-radius: 3px; }
-            
             .btn-primary { padding: 11px 24px; background-color: #2572b4; color: #ffffff; border: 1px solid #2369a5; font-size: 16px; font-weight: 700; cursor: pointer; border-radius: 4px; border-bottom: 3px solid #1b5180; }
-            .status-display-card { display: none; margin-top: 30px; padding: 25px; border-left: 6px solid #bc1c1c; background-color: #fcf8f8; border: 1px solid #e3cbcb; border-left: 6px solid #bc1c1c;}
+            .status-display-card { display: none; margin-top: 30px; padding: 25px; border-left: 6px solid #bc1c1c; background-color: #fcf8f8; border: 1px solid #e3cbcb; }
         </style>
     </head>
     <body>
         <div class="top-utility"><a href="#">Français</a></div>
         <div class="gov-brand-bar"><div class="signature-logo">Government of Canada</div></div>
         <div class="red-accent-strip"></div>
-        
         <div class="main-content">
             <h1>Immigration and Travel Eligibility Entry Portal</h1>
-            
             <div class="wet-tabs">
                 <button type="button" id="btn-login" class="active" onclick="setView('loginPanel', 'btn-login')">Access Existing Account</button>
                 <button type="button" id="btn-register" onclick="setView('registerPanel', 'btn-register')">Submit Application Package</button>
@@ -412,7 +426,7 @@ app.get('*', (req, res) => {
                     <div class="form-grid">
                         <div class="input-group">
                             <label>Legal Full Name <span class="required-mark">*</span></label>
-                            <input type="text" id="rName" required placeholder="As written in passport">
+                            <input type="text" id="rName" required>
                         </div>
                         <div class="input-group">
                             <label>Email Address <span class="required-mark">*</span></label>
@@ -420,7 +434,7 @@ app.get('*', (req, res) => {
                         </div>
                         <div class="input-group">
                             <label>Create Account Password <span class="required-mark">*</span></label>
-                            <input type="password" id="rPass" required autocomplete="new-password">
+                            <input type="password" id="rPass" required>
                         </div>
                         <div class="input-group">
                             <label>Date of Birth <span class="required-mark">*</span></label>
@@ -437,9 +451,7 @@ app.get('*', (req, res) => {
                     </div>
 
                     <div class="uploader-framework">
-                        <h3 style="margin-top:0; color:#1e293b; font-size:16px;">Required Travel Verification Assets Registry Stack</h3>
-                        <p style="font-size:13px; color:#64748b; margin-top:-8px;">Select a document type from the list, attach your digital file, and click the **Plus sign (+)** button to build your deployment package wrapper.</p>
-                        
+                        <h3>Required Travel Verification Assets Registry Stack</h3>
                         <div class="controls-row">
                             <div class="input-group" style="flex:1; margin-bottom:0;">
                                 <label>1. Select Specific Document Type Category</label>
@@ -454,16 +466,13 @@ app.get('*', (req, res) => {
                             </div>
                             <div class="input-group" style="flex:1; margin-bottom:0;">
                                 <label>2. Choose Digital Scan Asset File</label>
-                                <input type="file" id="fileSelector" style="padding:6px; height:auto; border:1px solid #cccccc;">
+                                <input type="file" id="fileSelector">
                             </div>
-                            <button type="button" class="plus-btn" onclick="addAssetToQueue()" title="Add Document to Application Stack">+</button>
+                            <button type="button" class="plus-btn" onclick="addAssetToQueue()">+</button>
                         </div>
-
-                        <div class="queue-list" id="visualQueue">
-                            </div>
+                        <div class="queue-list" id="visualQueue"></div>
                     </div>
-                    
-                    <br><br>
+                    <br>
                     <button type="submit" class="btn-primary">Submit Profile & All Stacked Documents</button>
                 </form>
             </div>
@@ -484,7 +493,6 @@ app.get('*', (req, res) => {
         </div>
 
         <script>
-            // Master storage array capturing files loaded via interactive plus engine loops
             let uploadedAssetsQueue = [];
 
             function setView(panelId, btnId) {
@@ -494,36 +502,17 @@ app.get('*', (req, res) => {
                 document.getElementById(btnId).classList.add('active');
             }
 
-            // Interactive Plus Action Logic Handle
             function addAssetToQueue() {
                 const selector = document.getElementById('docTypeSelector');
                 const fileInput = document.getElementById('fileSelector');
+                if(fileInput.files.length === 0) { alert('Please choose a file first.'); return; }
                 
-                if(fileInput.files.length === 0) {
-                    alert('⚠️ Missing Action: Please select a file from your storage folder before clicking the plus (+) sign.');
-                    return;
-                }
-
-                const selectedType = selector.value;
-                const textLabel = selector.options[selector.selectedIndex].text;
-                const targetFile = fileInput.files[0];
-
-                // Safeguard against duplicate category entries
-                const matchFound = uploadedAssetsQueue.some(item => item.type === selectedType);
-                if(matchFound && selectedType !== 'education' && selectedType !== 'experience') {
-                    alert('ℹ️ Operational Notice: A file has already been prepared for the choice: "' + textLabel + '". Please clear it out first if you wish to swap it.');
-                    return;
-                }
-
-                // Add to master variable pipeline array
                 uploadedAssetsQueue.push({
                     id: Date.now() + Math.random().toString(36).substr(2, 5),
-                    type: selectedType,
-                    label: textLabel,
-                    fileObject: targetFile
+                    type: selector.value,
+                    label: selector.options[selector.selectedIndex].text,
+                    fileObject: fileInput.files[0]
                 });
-
-                // Reset file block value for clean secondary input loop
                 fileInput.value = '';
                 renderVisualQueue();
             }
@@ -533,41 +522,28 @@ app.get('*', (req, res) => {
                 renderVisualQueue();
             }
 
-            // Maps array assets to high fidelity interface components dynamically
             function renderVisualQueue() {
                 const container = document.getElementById('visualQueue');
                 container.innerHTML = '';
-
                 if(uploadedAssetsQueue.length === 0) {
-                    container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:15px; color:#64748b; font-style:italic; font-size:14px;">No files added yet. Click the (+) button above to stack documents.</div>';
+                    container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:15px; color:#64748b; font-style:italic;">No files stacked. Click (+) to add.</div>';
                     return;
                 }
-
                 uploadedAssetsQueue.forEach(item => {
                     const div = document.createElement('div');
                     div.className = 'queue-item';
-                    div.innerHTML = \`
-                        <div>
-                            <span style="font-size:13px; font-weight:bold; color:#1e293b; display:block;">\${item.label}</span>
-                            <span style="font-size:11px; color:#64748b; word-break:break-all;">\${item.fileObject.name} (\${(item.fileObject.size/1024/1024).toFixed(2)} MB)</span>
-                        </div>
-                        <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>
-                    \`;
+                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name}</small></div>
+                                      <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>\`;
                     container.appendChild(div);
                 });
             }
 
-            // CORE COMPREHENSIVE REGISTRATION PACKAGE ROUTING
             document.getElementById('rForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                
-                if(uploadedAssetsQueue.length === 0) {
-                    alert('⛔ Transmission Blocked: Your application bundle contains zero document files. You must click the plus sign (+) to append your passports, certificates, or payment receipts before submitting.');
-                    return;
-                }
+                if(uploadedAssetsQueue.length === 0) { alert('Please stack at least one file using (+).'); return; }
 
                 const btn = e.target.querySelector('.btn-primary');
-                btn.innerText = "Transmitting Multi-Asset Travel Package Arrays...";
+                btn.innerText = "Transmitting Travel Package Arrays...";
                 btn.disabled = true;
 
                 const formData = new FormData();
@@ -578,23 +554,22 @@ app.get('*', (req, res) => {
                 formData.append('citizenship', document.getElementById('rCitizenship').value);
                 formData.append('passportNumber', document.getElementById('rPassport').value);
                 
-                // Pack matching elements into parallel transaction pipelines
                 uploadedAssetsQueue.forEach(item => {
-                    formData.append('files', item.fileObject);     // Multer files parser hook
-                    formData.append('docTypes', item.type);         // Parallel string metadata key tracking channel
+                    formData.append('files', item.fileObject);
+                    formData.append('docTypes', item.type);
                 });
 
                 try {
                     const res = await fetch('/api/auth/register', { method: 'POST', body: formData });
                     const data = await res.json();
                     if(res.ok && data.success) {
-                        alert('🎉 Perfect Success: Complete multi-document verification portfolio has been safely ingested with zero exceptions.');
+                        alert('🎉 Application package deployed successfully!');
                         uploadedAssetsQueue = [];
                         document.getElementById('rForm').reset();
                         renderVisualQueue();
                         setView('trackPanel', 'btn-track');
-                    } else { alert('Pipeline Refusal Exception: ' + data.error); }
-                } catch(err) { alert('Network transfer timeout. Try scaling file sizes lower.'); }
+                    } else { alert('Refusal Exception: ' + data.error); }
+                } catch(err) { alert('Transfer fault occurred.'); }
                 finally { btn.innerText = "Submit Profile & All Stacked Documents"; btn.disabled = false; }
             });
 
@@ -613,7 +588,7 @@ app.get('*', (req, res) => {
                     localStorage.setItem('adminToken', data.token);
                     localStorage.setItem('userRole', data.role);
                     if(data.role === 'admin') { window.location.href = '/admin'; } 
-                    else { alert('Sign-in verified successfully.'); }
+                    else { alert('Sign-in verified.'); }
                 } else { alert('Error: ' + data.error); }
             });
 
@@ -628,11 +603,9 @@ app.get('*', (req, res) => {
                 const out = document.getElementById('tResult');
                 if(res.ok) {
                     out.style.display = 'block';
-                    out.innerHTML = \`<h3>Applicant Holder: \${data.name}</h3><p><strong>Operational Status Stream:</strong> \${data.status}</p><p style="background:#fff; padding:12px; border:1px solid #ccc; font-size:14px; line-height:1.5;"><strong>Officer Notes:</strong> \${data.adminNotes}</p>\`;
+                    out.innerHTML = \`<h3>Applicant Holder: \${data.name}</h3><p><strong>Status:</strong> \${data.status}</p><p style="background:#fff; padding:12px; border:1px solid #ccc;"><strong>Notes:</strong> \${data.adminNotes}</p>\`;
                 } else { alert('UCI Lookup Error.'); }
             });
-            
-            // Trigger visual message check on loop start
             renderVisualQueue();
         </script>
     </body>
