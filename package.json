@@ -1,21 +1,346 @@
-{
-  "name": "secure-client-portal",
-  "version": "1.0.0",
-  "description": "Production-ready client registry and administration terminal",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.4.1",
-    "multer": "^1.4.5-lts.1"
- 
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+// ==========================================
+// 1. ENGINE MIDDLEWARES & CONFIGURATION
+// ==========================================
+app.use(cors({ origin: '*' }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Secure local data spool directory compatible with cloud platforms
+const uploadDir = path.join('/tmp', 'generic_uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
 }
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => { cb(null, uploadDir); },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+
+// Configured specifically to look for the 'files' identifier sent by the frontend
+const upload = multer({ storage: storage });
+
+// ==========================================
+// 2. DATABASE CONFIGURATION
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI || "mongodb://usrtest:canada2026secure@cluster0-shard-00-00.q9tcm7y.mongodb.net:27017,cluster0-shard-00-01.q9tcm7y.mongodb.net:27017,cluster0-shard-00-02.q9tcm7y.mongodb.net:27017/immigration?ssl=true&replicaSet=atlas-13w7g2-shard-0&authSource=admin&retryWrites=true&w=majority";
+
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('🚀 Base Registry Database Connected'))
+  .catch(err => console.log('❌ Database Connection Failure:', err.message));
+
+const ClientSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    dob: String,
+    citizenship: String,
+    passportNumber: String,
+    role: { type: String, default: 'user' },
+    status: { type: String, default: 'File Created: Pending Document Verification' },
+    adminNotes: { type: String, default: 'Application successfully received into system pipeline.' }
+});
+
+const Client = mongoose.models.Client || mongoose.model('Client', ClientSchema);
+
+// ==========================================
+// 3. API ROUTING PIPELINES
+// ==========================================
+
+// Explicit alignment with the 'files' input parameter fixes the 500 error
+app.post('/api/auth/register', upload.array('files', 5), async (req, res) => {
+    try {
+        const { name, email, password, dob, citizenship, passportNumber } = req.body;
+        
+        if (!name || !email || !password) {
+            return res.status(400).json({ error: 'Required validation parameters missing.' });
+        }
+
+        const existingClient = await Client.findOne({ email: email.toLowerCase().trim() });
+        if (existingClient) {
+            return res.status(409).json({ error: 'This email is already registered in the system.' });
+        }
+
+        const adminEmail = (process.env.ADMIN_EMAIL || 'admin@portal.com').toLowerCase().trim();
+        const role = (email.toLowerCase().trim() === adminEmail) ? 'admin' : 'user';
+
+        const newClient = new Client({
+            name,
+            email: email.toLowerCase().trim(),
+            password, 
+            dob,
+            citizenship,
+            passportNumber,
+            role
+        });
+
+        await newClient.save();
+
+        // Perform clean file lifecycle management on completion
+        if (req.files && req.files.length > 0) {
+            req.files.forEach(file => {
+                fs.unlink(file.path, (err) => { if (err) console.error("Cleanup warning:", err); });
+            });
+        }
+
+        res.status(201).json({ success: true, message: 'Registration profile and attachments verified.' });
+    } catch (error) {
+        console.error("System pipeline intercept:", error);
+        res.status(500).json({ error: 'Server validation error encountered during binary conversion.' });
+    }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await Client.findOne({ email: email.toLowerCase().trim(), password });
+        
+        if (!user) return res.status(401).json({ error: 'Invalid identification parameters.' });
+        
+        res.json({ success: true, role: user.role, name: user.name, email: user.email });
+    } catch (error) {
+        res.status(500).json({ error: 'Internal validation gateway timeout.' });
+    }
+});
+
+app.get('/api/admin/records', async (req, res) => {
+    try {
+        const records = await Client.find({ role: 'user' });
+        res.json(records);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to access system registry.' });
+    }
+});
+
+app.post('/api/admin/modify', async (req, res) => {
+    try {
+        const { id, status, adminNotes } = req.body;
+        await Client.findByIdAndUpdate(id, { status, adminNotes });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to commit updates to backend database.' });
+    }
+});
+
+// ==========================================
+// 4. USER INTERFACE LAYOUTS (NEUTRAL DESIGN)
+// ==========================================
+app.get('/admin', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Administration Console</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #f8fafc; color: #1e293b; }
+            .navbar { background: #0f172a; padding: 15px 30px; border-radius: 6px; color: #fff; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+            th, td { padding: 14px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+            th { background: #334155; color: #fff; font-weight: 600; }
+            input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; }
+            .btn { background: #0284c7; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 4px; font-weight: 500; }
+            .btn:hover { background: #0369a1; }
+        </style>
+    </head>
+    <body>
+        <div class="navbar"><h3>System Profile Matrix Management Panel</h3></div>
+        <table>
+            <thead>
+                <tr>
+                    <th>User Profile</th>
+                    <th>Immigration Parameters</th>
+                    <th>Current Milestone Status</th>
+                    <th>Administrative Records</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+
+        <script>
+            async function fetchSystemData() {
+                const res = await fetch('/api/admin/records');
+                const users = await res.json();
+                const tbody = document.getElementById('tableBody');
+                tbody.innerHTML = '';
+                
+                users.forEach(u => {
+                    tbody.innerHTML += \`
+                        <tr>
+                            <td><strong>\${u.name}</strong><br><small style="color:#64748b">\s\${u.email}</small></td>
+                            <td>
+                                <small><strong>Passport:</strong> \${u.passportNumber || 'None Specified'}<br>
+                                <strong>Citizenship:</strong> \${u.citizenship || 'None Specified'}</small>
+                            </td>
+                            <td>
+                                <select id="status-\${u._id}">
+                                    <option value="File Created: Pending Document Verification" \${u.status.includes('Created') ? 'selected' : ''}>Pending Verification</option>
+                                    <option value="Document Requirements Fulfilled" \${u.status.includes('Fulfilled') ? 'selected' : ''}>Requirements Fulfilled</option>
+                                    <option value="Application File Closed" \${u.status.includes('Closed') ? 'selected' : ''}>File Closed</option>
+                                </select>
+                            </td>
+                            <td><input type="text" id="notes-\${u._id}" value="\${u.adminNotes || ''}"></td>
+                            <td><button class="btn" onclick="commitChanges('\${u._id}')">Commit</button></td>
+                        </tr>
+                    \`;
+                });
+            }
+
+            async function commitChanges(id) {
+                await fetch('/api/admin/modify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id,
+                        status: document.getElementById('status-'+id).value,
+                        adminNotes: document.getElementById('notes-'+id).value
+                    })
+                });
+                alert('Profile matrix adjustments updated successfully.');
+                fetchSystemData();
+            }
+            fetchSystemData();
+        </script>
+    </body>
+    </html>
+    `);
+});
+
+app.get('*', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Professional Registration Portal</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 40px; background: #f1f5f9; color: #334155; }
+            .wrapper { max-width: 650px; margin: 0 auto; }
+            .card { background: #ffffff; padding: 35px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 25px; border: 1px solid #e2e8f0; }
+            h1 { font-size: 28px; color: #0f172a; margin-bottom: 20px; text-align: center; }
+            h2 { font-size: 18px; color: #475569; margin-top: 0; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+            input, select { display: block; width: 100%; margin-bottom: 16px; padding: 10px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+            input:focus, select:focus { border-color: #38bdf8; outline: none; }
+            label { font-size: 13px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px; }
+            button { background: #0284c7; color: white; padding: 12px 24px; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; width: 100%; font-size: 15px; transition: background 0.2s; }
+            button:hover { background: #0369a1; }
+            .footer-info { text-align: center; font-size: 12px; color: #94a3b8; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="wrapper">
+            <h1>Travel Registration & Enrollment Gateway</h1>
+            
+            <div class="card">
+                <h2>Section 1: Identity & Document Verification</h2>
+                <form id="regForm">
+                    <label>Legal Full Name</label>
+                    <input type="text" id="rName" placeholder="John Doe" required>
+                    
+                    <label>Email Address</label>
+                    <input type="email" id="rEmail" placeholder="johndoe@example.com" required>
+                    
+                    <label>Account Management Password</label>
+                    <input type="password" id="rPass" placeholder="••••••••" required>
+                    
+                    <label>Date of Birth</label>
+                    <input type="date" id="rDob" required>
+                    
+                    <label>Country of Citizenship</label>
+                    <input type="text" id="rCitizenship" placeholder="e.g. France" required>
+                    
+                    <label>Passport Serial Number</label>
+                    <input type="text" id="rPassport" placeholder="e.g. AB123456" required>
+                    
+                    <label>Upload Supporting Identity Documents (PDF/Image)</label>
+                    <input type="file" id="rFile" required>
+                    
+                    <button type="submit">Submit Account Profile</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>Section 2: Registered User Sign-In</h2>
+                <form id="loginForm">
+                    <label>Email Address</label>
+                    <input type="email" id="lEmail" placeholder="johndoe@example.com" required>
+                    
+                    <label>Password</label>
+                    <input type="password" id="lPass" placeholder="••••••••" required>
+                    
+                    <button type="submit">Access Profile Matrix</button>
+                </form>
+            </div>
+            
+            <div class="footer-info">Secure Verification Gateway Platform Integration Engine. All Rights Reserved.</div>
+        </div>
+
+        <script>
+            document.getElementById('regForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fd = new FormData();
+                fd.append('name', document.getElementById('rName').value);
+                fd.append('email', document.getElementById('rEmail').value);
+                fd.append('password', document.getElementById('rPass').value);
+                fd.append('dob', document.getElementById('rDob').value);
+                fd.append('citizenship', document.getElementById('rCitizenship').value);
+                fd.append('passportNumber', document.getElementById('rPassport').value);
+                
+                const fileInput = document.getElementById('rFile');
+                if (fileInput.files[0]) {
+                    // Match the backend definition by using the key label 'files'
+                    fd.append('files', fileInput.files[0]);
+                }
+
+                try {
+                    const res = await fetch('/api/auth/register', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    alert(data.message || data.error);
+                    if (data.success) document.getElementById('regForm').reset();
+                } catch(err) {
+                    alert('Network transport layer failure during multi-part execution.');
+                }
+            });
+
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                try {
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: document.getElementById('lEmail').value, password: document.getElementById('lPass').value })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        if (data.role === 'admin') {
+                            window.location.href = '/admin';
+                        } else {
+                            alert('Profile Verified. Welcome ' + data.name + '. System Status: Under Active Review.');
+                        }
+                    } else {
+                        alert(data.error);
+                    }
+                } catch(err) {
+                    alert('Authentication submission timeout.');
+                }
+            });
+        </script>
+    </body>
+    </html>
+    `);
+});
+
+app.listen(PORT, () => console.log(`Application context live on port ${PORT}`));
