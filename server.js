@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
-const rateLimit = require('express-limit');
+const rateLimit = require('express-rate-limit'); // Corrected import reference
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -207,7 +207,7 @@ app.get('/admin', (req, res) => {
             th, td { padding: 16px; border-bottom: 1px solid #e2e8f0; text-align: left; }
             th { background: #334155; color: #fff; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; }
             input, select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; background: #f8fafc; }
-            input:focus, select:focus { outline: none; border-color: #0284c7; background: #fff; }
+            input:focus, select:focus { outline: none; border-color: #0284c7; background: #fff; box-shadow: 0 0 0 4px rgba(2,132,199,0.1); }
             .btn { background: #0284c7; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: 600; font-size: 13px; transition: background 0.15s ease; }
             .btn:hover { background: #0369a1; }
         </style>
